@@ -1,22 +1,22 @@
 cmake_minimum_required(VERSION 3.13)
-project(ImGuiDemoProject LANGUAGES CXX)
+project(InfiniteOutliner LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 conan_basic_setup()
 
-add_executable(${PROJECT_NAME}
-    # add_executable requires at least one source file
-    source/main.cpp
+file(GLOB_RECURSE appInfiniteOuterliner_SRC_FILES
+    source/*.hpp
+    source/*.cpp
 )
-add_subdirectory(source)
+add_executable(appInfiniteOuterliner ${appInfiniteOuterliner_SRC_FILES})
 
-target_include_directories(${PROJECT_NAME}
+target_include_directories(appInfiniteOuterliner
 PRIVATE
     sources/
 )
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(appInfiniteOuterliner
 PRIVATE
     ${CONAN_LIBS}
 )

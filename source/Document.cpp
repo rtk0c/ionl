@@ -3,20 +3,34 @@
 #include "Macros.hpp"
 #include "Utils.hpp"
 
+#include <date/date.h>
 #include <sqlite3.h>
 #include <cassert>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 
 using namespace std::literals;
 
+// A number for `PRAGMA user_vesrion`, representing the current database version. Increment when the table format changes.
+#define CURRENT_DATABASE_VERSION 1
+// NOTE: macros for string literal concatenation only
+#define ROOT_BULLET_PBID 1
+#define ROOT_BULLET_RBID 0
+constexpr Ionl::Pbid kRootBulletPbid = ROOT_BULLET_PBID;
+constexpr Ionl::Rbid kRootBulletRbid = ROOT_BULLET_RBID;
+
 Ionl::BulletType Ionl::BulletContent::GetType() const {
-    std::visit(
+    return std::visit(
         Overloaded{
-            [](const BulletContentSimple&) { return BulletType::Simple; },
-            [](const BulletContentReference&) { return BulletType::Reference; },
+            [](const BulletContentTextual&) { return BulletType::Textual; },
+            [](const BulletContentMirror&) { return BulletType::Mirror; },
         },
         v);
+}
+
+bool Ionl::Bullet::IsRootBullet() const {
+    return pbid == kRootBulletPbid;
 }
 
 struct SQLiteDatabase {
@@ -138,7 +152,14 @@ struct SQLiteRunningStatement {
             int err = sqlite3_step(stmt);
             // SQLITE_DONE, and all others are error codes
             // SQLITE_OK is never returned for sqlite3_step() //TODO fact check this
-            if (err == SQLITE_ROW) {
+            if (err == SQLITE_DONE) {
+                break;
+            }
+            if (err != SQLITE_ROW) {
+                std::string msg;
+                msg += "Error executing SQLite3 statement, error message:\n";
+                msg += sqlite3_errmsg(sqlite3_db_handle(stmt));
+                throw std::runtime_error(msg);
                 break;
             }
         }
@@ -148,6 +169,7 @@ struct SQLiteRunningStatement {
     using TpFromUnixTimestamp = std::pair<TimePoint, int64_t>;
     using TpFromDateTime = std::pair<TimePoint, const char*>;
 
+    // TODO replace with overloads?
     template <typename T>
     auto ResultColumn(int column) const {
         if constexpr (std::is_enum_v<T>) {
@@ -168,8 +190,14 @@ struct SQLiteRunningStatement {
             return TimePoint(chrono);
         } else if constexpr (std::is_same_v<T, TpFromDateTime>) {
             auto datetime = (const char*)sqlite3_column_text(stmt, column);
-            // TODO
-            return TimePoint();
+            if (datetime) {
+                std::stringstream ss(datetime);
+                TimePoint timepoint;
+                ss >> date::parse("%F %T", timepoint);
+                return timepoint;
+            } else {
+                return TimePoint();
+            }
         } else {
             static_assert(false && sizeof(T), "Unknown type");
         }
@@ -187,25 +215,17 @@ struct SQLiteRunningStatement {
     }
 };
 
-// A number for `PRAGMA user_vesrion`, representing the current database version. Increment when the table format changes.
-#define CURRENT_DATABASE_VERSION 1
-// NOTE: macros for string literal concatenation only
-#define ROOT_BULLET_PBID 1
-#define ROOT_BULLET_RBID 0
-constexpr Ionl::Pbid kRootBulletPbid = ROOT_BULLET_PBID;
-constexpr Ionl::Rbid kRootBulletRbid = ROOT_BULLET_RBID;
-
 class Ionl::Document::BackingDataStore {
 public:
     // NOTE: this must be the first field, because we want it to destruct after all other statement fields
     SQLiteDatabase database;
-    SQLiteStatement fetchBulletContentByPbid;
-    SQLiteStatement fetchBulletParentByPbid;
-    SQLiteStatement fetchBulletChildrenByPbid;
+    SQLiteStatement getBulletContent;
+    SQLiteStatement getBulletParent;
+    SQLiteStatement getBulletChildren;
     SQLiteStatement insertBullet;
     SQLiteStatement deleteBullet;
-    SQLiteStatement updateBulletContent;
-    SQLiteStatement reparentBullet;
+    SQLiteStatement setBulletContent;
+    SQLiteStatement setBulletPosition;
 
 public:
     BackingDataStore(const char* dbPath) {
@@ -250,9 +270,9 @@ public:
             }
         }
 
-        fetchBulletContentByPbid.Initialize(database, "SELECT CreationTime, ModifyTime, ContentType, ContentValue FROM Bullets WHERE Bullets.Pbid = ?1"sv);
-        fetchBulletParentByPbid.Initialize(database, "SELECT ParentPbid FROM Bullets WHERE Bullets.Pbid = ?1"sv);
-        fetchBulletChildrenByPbid.Initialize(database, R"""(
+        getBulletContent.Initialize(database, "SELECT CreationTime, ModifyTime, ContentType, ContentValue FROM Bullets WHERE Bullets.Pbid = ?1"sv);
+        getBulletParent.Initialize(database, "SELECT ParentPbid FROM Bullets WHERE Bullets.Pbid = ?1"sv);
+        getBulletChildren.Initialize(database, R"""(
 SELECT Bullets.Pbid FROM Bullets
 WHERE Bullets.ParentPbid = ?1
 ORDER BY ParentSorting
@@ -260,7 +280,9 @@ ORDER BY ParentSorting
 
         insertBullet.Initialize(database, R"""(
 INSERT INTO Bullets(ParentPbid, ParentSorting, CreationTime, ModifyTime)
-VALUES (?1, ?2, datetime('now'), datetime('now'))
+SELECT ?1, max(ParentSorting) + 1, datetime('now'), datetime('now')
+    FROM Bullets
+    WHERE ParentPbid = ?1
 )"""sv);
 
         deleteBullet.Initialize(database, R"""(
@@ -268,7 +290,7 @@ DELETE FROM Bullets
 WHERE Pbid = ?1
 )"""sv);
 
-        updateBulletContent.Initialize(database, R"""(
+        setBulletContent.Initialize(database, R"""(
 UPDATE Bullets
 SET ModifyTime = datetime('now'),
     ContentType = ?2,
@@ -276,7 +298,17 @@ SET ModifyTime = datetime('now'),
 WHERE Pbid = ?1
 )"""sv);
 
-        reparentBullet.Initialize(database, R"""(
+        setBulletPosition.Initialize(database, R"""(
+UPDATE BULLETS
+SET ModifyTime = datetime('now'),
+    ParentPbid = ?2,
+    ParentSorting = ?3
+WHERE Pbid = ?1;
+
+UPDATE BULLETS
+SET ParentSorting = ParentSorting + 1
+WHERE ParentPbid = ?2
+  AND ParentSorting > ?3;
 )"""sv);
     }
 
@@ -285,7 +317,7 @@ WHERE Pbid = ?1
         result.pbid = pbid;
         result.rbid = (size_t)-1;
         {
-            SQLiteRunningStatement rt(fetchBulletContentByPbid);
+            SQLiteRunningStatement rt(getBulletContent);
             rt.BindArguments(pbid);
 
             rt.StepAndCheck(SQLITE_ROW);
@@ -295,17 +327,17 @@ WHERE Pbid = ?1
             result.creationTime = creationTime;
             result.modifyTime = modifyTime;
             switch (contentType) {
-                case BulletType::Simple:
+                case BulletType::Textual:
                 default: {
                     auto content = rt.ResultColumn<const char*>(/*4th*/ 3);
-                    result.content.v = BulletContentSimple{
+                    result.content.v = BulletContentTextual{
                         .text = content ? content : "",
                     };
                 } break;
 
-                case BulletType::Reference: {
+                case BulletType::Mirror: {
                     auto refereePbid = (Pbid)rt.ResultColumn<int64_t>(/*4th*/ 3);
-                    result.content.v = BulletContentReference{
+                    result.content.v = BulletContentMirror{
                         .referee = refereePbid,
                     };
                 } break;
@@ -317,7 +349,7 @@ WHERE Pbid = ?1
     }
 
     Pbid FetchParentOfBullet(Pbid bullet) {
-        SQLiteRunningStatement rt(fetchBulletParentByPbid);
+        SQLiteRunningStatement rt(getBulletParent);
         rt.BindArguments(bullet);
 
         rt.StepAndCheck(SQLITE_ROW);
@@ -329,7 +361,7 @@ WHERE Pbid = ?1
     std::vector<Pbid> FetchChildrenOfBullet(Pbid bullet) {
         std::vector<Pbid> result;
 
-        SQLiteRunningStatement rt(fetchBulletChildrenByPbid);
+        SQLiteRunningStatement rt(getBulletChildren);
         rt.BindArguments(bullet);
         while (true) {
             int err = rt.Step();
@@ -358,26 +390,26 @@ WHERE Pbid = ?1
         rt.StepUntilDoneOrError();
     }
 
-    void UpdateBullet(Pbid bullet, const BulletContent& bulletContent) {
-        SQLiteRunningStatement rt(updateBulletContent);
+    void SetBulletContent(Pbid bullet, const BulletContent& bulletContent) {
+        SQLiteRunningStatement rt(setBulletContent);
         rt.BindArgument(0, bullet);
         std::visit(
             Overloaded{
-                [&](const BulletContentSimple& bc) {
-                    rt.BindArgument(2, (int)BulletType::Simple);
+                [&](const BulletContentTextual& bc) {
+                    rt.BindArgument(2, (int)BulletType::Textual);
                     rt.BindArgument(3, bc.text);
                 },
-                [&](const BulletContentReference& bc) {
-                    rt.BindArgument(2, (int)BulletType::Simple);
+                [&](const BulletContentMirror& bc) {
+                    rt.BindArgument(2, (int)BulletType::Textual);
                     rt.BindArgument(3, (int64_t)bc.referee);
-                }
+                },
             },
             bulletContent.v);
         rt.StepUntilDoneOrError();
     }
 
-    void ReparentBullet(Pbid bullet, Pbid newParent, int newIndex) {
-        SQLiteRunningStatement rt(reparentBullet);
+    void SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) {
+        SQLiteRunningStatement rt(setBulletPosition);
         rt.BindArguments(bullet, newParent, newIndex);
         rt.StepUntilDoneOrError();
     }
@@ -429,7 +461,14 @@ ON Bullets(ModifyTime);
 )"""
 // Root bullet
 // NOTE: all of other fields are left NULL because they are irrelevant
-"INSERT INTO Bullets(Pbid) VALUES (" STRINGIFY(ROOT_BULLET_PBID) ");"
+"INSERT INTO BULLETS(Pbid)"
+"VALUES (" STRINGIFY(ROOT_BULLET_PBID) ")"
+";"
+// The default bullet
+// TODO maybe we should just let the user create this by pressing enter in the initial empty pane
+"INSERT INTO Bullets(ParentPbid, ParentSorting, CreationTime, ModifyTime, ContentType, ContentValue)"
+"VALUES (last_insert_rowid(), 0, datetime('now'), datetime('now'), 1, '')"
+";"
 "COMMIT TRANSACTION;",
             nullptr,
             nullptr,
@@ -460,7 +499,7 @@ Ionl::Bullet& Ionl::Document::GetRoot() {
     return const_cast<Bullet&>(const_cast<const Document*>(this)->GetRoot());
 }
 
-Ionl::Bullet* Ionl::Document::FetchBulletByRbid(Rbid rbid) {
+Ionl::Bullet* Ionl::Document::GetBulletByRbid(Rbid rbid) {
     if (rbid >= mBullets.size()) {
         return nullptr;
     }
@@ -473,29 +512,75 @@ Ionl::Bullet* Ionl::Document::FetchBulletByRbid(Rbid rbid) {
     return &ob.value();
 }
 
+Ionl::Bullet* Ionl::Document::GetBulletByPbid(Pbid pbid) {
+    auto iter = mPtoRmap.find(pbid);
+    if (iter != mPtoRmap.end()) {
+        return GetBulletByRbid(iter->second);
+    }
+
+    return nullptr;
+}
+
 Ionl::Bullet& Ionl::Document::FetchBulletByPbid(Pbid pbid) {
     auto iter = mPtoRmap.find(pbid);
     if (iter != mPtoRmap.end()) {
-        return *FetchBulletByRbid(iter->second);
+        return *GetBulletByRbid(iter->second);
     }
 
-    // TODO load from database
+    return *Store(mStore->FetchBullet(pbid));
+}
 
-    Bullet* bullet;
-    if (auto fetchedBullet = mStore->FetchBullet(pbid);
-        mFreeRbids.empty())
+Ionl::Bullet& Ionl::Document::CreateBullet() {
+    auto pbid = mStore->InsertEmptyBullet();
+    auto& bullet = *Store(mStore->FetchBullet(pbid));
+    return bullet;
+}
+
+void Ionl::Document::DeleteBullet(Bullet& bullet) {
+    mStore->DeleteBullet(bullet.pbid);
+    mPtoRmap.erase(bullet.pbid);
+    mFreeRbids.push_back(bullet.rbid);
+    // Do this last, this invalidates `bullet`
+    mBullets[bullet.rbid].reset();
+}
+
+void Ionl::Document::ReparentBullet(Bullet& bullet, Bullet& newParent, int index) {
+    // Update database
+    mStore->SetBulletPosition(bullet.pbid, newParent.pbid, index);
+
+    // Update in-memory objects
+    if (auto oldParent = GetBulletByPbid(bullet.parentPbid)) {
+        auto pos = std::find(oldParent->children.begin(), oldParent->children.end(), bullet.pbid);
+        if (pos != oldParent->children.end()) {
+            oldParent->children.erase(pos);
+        }
+    }
+    bullet.parentPbid = newParent.pbid;
     {
-        mBullets.push_back(std::move(fetchedBullet));
+        auto pos = newParent.children.begin() + index;
+        newParent.children.insert(pos, bullet.pbid);
+    }
+}
 
-        bullet = &mBullets.back().value();
-        bullet->rbid = mBullets.size() - 1;
+Ionl::Bullet* Ionl::Document::Store(Bullet bullet) {
+    Bullet* result;
+
+    // Put into storage
+    if (mFreeRbids.empty()) {
+        mBullets.push_back(std::move(bullet));
+
+        result = &mBullets.back().value();
+        result->rbid = mBullets.size() - 1;
     } else {
-        size_t rbid = fetchedBullet.rbid = mFreeRbids.back();
+        size_t rbid = bullet.rbid = mFreeRbids.back();
         mFreeRbids.pop_back();
-        mBullets[rbid] = std::move(fetchedBullet);
+        mBullets[rbid] = std::move(bullet);
 
-        bullet = &mBullets[rbid].value();
+        result = &mBullets[rbid].value();
     }
 
-    return *bullet;
+    // Update pbid->rbid mapping
+    mPtoRmap.try_emplace(result->pbid, result->rbid);
+
+    return result;
 }

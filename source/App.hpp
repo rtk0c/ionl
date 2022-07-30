@@ -20,6 +20,10 @@ public:
     const Ionl::Bullet& GetCurrentBullet() const { return *mCurrentBullet; }
 
     void Show();
+
+private:
+    struct ShowContext;
+    void ShowBullet(ShowContext& ctx, Ionl::Bullet& bullet);
 };
 
 } // namespace Ionl

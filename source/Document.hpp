@@ -22,23 +22,22 @@ using Rbid = size_t;
 
 /// NOTE: do not change these values, they are a part of the on-disk format
 enum class BulletType {
-    Simple = 1,
-    Reference = 2,
+    Textual = 1,
+    Mirror = 2,
 };
 
-struct BulletContentSimple {
+struct BulletContentTextual {
     std::string text;
 };
 
-struct BulletContentReference {
-    std::string text;
+struct BulletContentMirror {
     Pbid referee;
 };
 
 struct BulletContent {
     std::variant<
-        BulletContentSimple,
-        BulletContentReference>
+        BulletContentTextual,
+        BulletContentMirror>
         v;
 
     BulletType GetType() const;
@@ -48,11 +47,15 @@ struct Bullet {
     Pbid pbid;
     Rbid rbid;
     Pbid parentPbid;
+    // TODO do we actually want these two in memory? keeping them in sync with database is difficult
+    // (requires passing extra data through BackingStore through every modification function)
     std::chrono::time_point<std::chrono::system_clock> creationTime;
     std::chrono::time_point<std::chrono::system_clock> modifyTime;
     BulletContent content;
     std::vector<Pbid> children;
     bool expanded = true;
+
+    bool IsRootBullet() const;
 };
 
 class Document {
@@ -71,8 +74,16 @@ public:
     Bullet& GetRoot();
     const Bullet& GetRoot() const;
 
-    Bullet* FetchBulletByRbid(Rbid rbid);
+    Bullet* GetBulletByRbid(Rbid rbid);
+    Bullet* GetBulletByPbid(Pbid pbid);
     Bullet& FetchBulletByPbid(Pbid pbid);
+
+    Bullet& CreateBullet();
+    void DeleteBullet(Bullet& bullet);
+    void ReparentBullet(Bullet& bullet, Bullet& newParent, int index);
+
+private:
+    Bullet* Store(Bullet bullet);
 };
 
 } // namespace Ionl

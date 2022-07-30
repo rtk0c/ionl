@@ -4,4 +4,8 @@
 // - Unicode/language-aware cursor movement (TODO do we need to grab ICU for this?)
 #pragma once
 
-// TODO
+#include <imgui.h>
+
+namespace Ionl {
+
+} // namespace Ionl

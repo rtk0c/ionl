@@ -40,7 +40,9 @@ void Ionl::DocumentView::ShowBullet(ShowContext& ctx, Bullet& bullet) {
     std::visit(
         Overloaded{
             [&](BulletContentTextual& bc) {
-                ImGui::InputText("BulletContent", &bc.text);
+                if (ImGui::InputText("BulletContent", &bc.text)) {
+                    bullet.document->UpdateBulletContent(bullet);
+                }
             },
             [&](BulletContentMirror& bc) {
                 // TODO

@@ -43,9 +43,11 @@ struct BulletContent {
     BulletType GetType() const;
 };
 
+class Document;
 struct Bullet {
+    /* Document linked */ Document* document;
+    /* Document linked */ Rbid rbid;
     Pbid pbid;
-    Rbid rbid;
     Pbid parentPbid;
     // TODO do we actually want these two in memory? keeping them in sync with database is difficult
     // (requires passing extra data through BackingStore through every modification function)
@@ -80,6 +82,7 @@ public:
 
     Bullet& CreateBullet();
     void DeleteBullet(Bullet& bullet);
+    void UpdateBulletContent(Bullet& bullet);
     void ReparentBullet(Bullet& bullet, Bullet& newParent, int index);
 
 private:

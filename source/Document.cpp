@@ -392,7 +392,7 @@ WHERE ParentPbid = ?2
 
     void SetBulletContent(Pbid bullet, const BulletContent& bulletContent) {
         SQLiteRunningStatement rt(setBulletContent);
-        rt.BindArgument(0, bullet);
+        rt.BindArgument(1, bullet);
         std::visit(
             Overloaded{
                 [&](const BulletContentTextual& bc) {
@@ -400,7 +400,7 @@ WHERE ParentPbid = ?2
                     rt.BindArgument(3, bc.text);
                 },
                 [&](const BulletContentMirror& bc) {
-                    rt.BindArgument(2, (int)BulletType::Textual);
+                    rt.BindArgument(2, (int)BulletType::Mirror);
                     rt.BindArgument(3, (int64_t)bc.referee);
                 },
             },
@@ -463,11 +463,6 @@ ON Bullets(ModifyTime);
 // NOTE: all of other fields are left NULL because they are irrelevant
 "INSERT INTO BULLETS(Pbid)"
 "VALUES (" STRINGIFY(ROOT_BULLET_PBID) ")"
-";"
-// The default bullet
-// TODO maybe we should just let the user create this by pressing enter in the initial empty pane
-"INSERT INTO Bullets(ParentPbid, ParentSorting, CreationTime, ModifyTime, ContentType, ContentValue)"
-"VALUES (last_insert_rowid(), 0, datetime('now'), datetime('now'), 1, '')"
 ";"
 "COMMIT TRANSACTION;",
             nullptr,
@@ -544,6 +539,10 @@ void Ionl::Document::DeleteBullet(Bullet& bullet) {
     mBullets[bullet.rbid].reset();
 }
 
+void Ionl::Document::UpdateBulletContent(Bullet& bullet) {
+    mStore->SetBulletContent(bullet.pbid, bullet.content);
+}
+
 void Ionl::Document::ReparentBullet(Bullet& bullet, Bullet& newParent, int index) {
     // Update database
     mStore->SetBulletPosition(bullet.pbid, newParent.pbid, index);
@@ -582,5 +581,6 @@ Ionl::Bullet* Ionl::Document::Store(Bullet bullet) {
     // Update pbid->rbid mapping
     mPtoRmap.try_emplace(result->pbid, result->rbid);
 
+    result->document = this;
     return result;
 }

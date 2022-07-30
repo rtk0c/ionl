@@ -6,17 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 conan_basic_setup()
 
-file(GLOB_RECURSE appInfiniteOuterliner_SRC_FILES
+file(GLOB_RECURSE appInfiniteOutliner_SRC_FILES
     source/*.hpp
     source/*.cpp
 )
-add_executable(appInfiniteOuterliner ${appInfiniteOuterliner_SRC_FILES})
+add_executable(appInfiniteOutliner ${appInfiniteOutliner_SRC_FILES})
 
-target_include_directories(appInfiniteOuterliner
+target_include_directories(appInfiniteOutliner
 PRIVATE
     sources/
 )
-target_link_libraries(appInfiniteOuterliner
+target_link_libraries(appInfiniteOutliner
 PRIVATE
     ${CONAN_LIBS}
 )

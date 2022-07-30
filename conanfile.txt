@@ -1,4 +1,5 @@
 [requires]
+robin-hood-hashing/3.11.5
 glad/0.1.36
 glfw/3.3.7
 imgui/cci.20220621+1.88.docking

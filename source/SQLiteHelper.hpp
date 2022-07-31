@@ -154,10 +154,10 @@ struct SQLiteRunningStatement {
         if constexpr (std::is_enum_v<T>) {
             auto value = sqlite3_column_int64(stmt, column);
             return static_cast<T>(value);
-        } else if constexpr (std::is_same_v<T, int>) {
-            return sqlite3_column_int(stmt, column);
+        } else if constexpr (std::is_same_v<T, int> || std::is_same_v<T, bool>) {
+            return (T)sqlite3_column_int(stmt, column);
         } else if constexpr (std::is_same_v<T, int64_t>) {
-            return sqlite3_column_int64(stmt, column);
+            return (T)sqlite3_column_int64(stmt, column);
         } else if constexpr (std::is_same_v<T, const char*>) {
             return (const char*)sqlite3_column_text(stmt, column);
         } else if constexpr (std::is_same_v<T, std::string>) {

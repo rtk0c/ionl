@@ -27,6 +27,7 @@ public:
     SQLiteStatement insertBullet;
     SQLiteStatement deleteBullet;
     SQLiteStatement pushSorting;
+    SQLiteStatement isParentChildUnique;
     SQLiteStatement setBulletContent;
     SQLiteStatement setBulletPositionAtBeginning;
     SQLiteStatement setBulletPositionAfter;
@@ -63,8 +64,18 @@ CREATE TABLE Bullets(
     -- If BulletType::Reference, this is INTEGER REFERENCES Bullet(Pbid)
     ContentValue
 );
-
-CREATE UNIQUE INDEX Idx_Bullets_ParentChild
+)"""
+// This should be an UNIQUE index, but since SQLite3 treats an UPDATE statement that operates on multiple rows at once
+// as individual updates, uniqueness is (unrightfully) violated if we do so
+//
+// Example: the `pushSorting` statement "bumps" a range of rows, breaking if UNIQUE
+//
+// See https://stackoverflow.com/questions/56624169/sqlite-update-execution-order-with-unique
+//
+// We manually enforce uniqueness by checking whether the Bullets.ParentPbid + Bullets.ParentSorting pairs exists
+// by using `isParentChildUnique`, and calling `pushSorting` if the pair is not unique.
+R"""(
+CREATE INDEX Idx_Bullets_ParentChild
 ON Bullets(ParentPbid, ParentSorting);
 
 CREATE INDEX Idx_Bullets_CreationTime
@@ -169,6 +180,20 @@ WHERE ParentPbid = ?1
   AND ParentSorting > _Anchor.Sorting
 )"""sv);
 
+    m->isParentChildUnique.Initialize(m->database, R"""(
+SELECT NOT EXISTS(
+    WITH _Anchor AS (
+        SELECT ParentSorting AS Sorting
+        FROM Bullets
+        WHERE Pbid = ?2
+    )
+    SELECT 1
+    FROM Bullets, _Anchor
+    WHERE ParentPbid = ?1
+      AND ParentSorting = _Anchor.Sorting + 1
+)
+)"""sv);
+
     m->setBulletContent.Initialize(m->database, R"""(
 UPDATE Bullets
 SET ModifyTime = datetime('now'),
@@ -181,7 +206,7 @@ WHERE Pbid = ?1
 UPDATE Bullets
 SET ModifyTime = datetime('now'),
     ParentPbid = ?2,
-    ParentSorting = ifnull(_Minimum.MinParentSorting, 1) - 1
+    ParentSorting = ifnull(_Minimum.MinParentSorting, 1) - 10
 FROM (
     SELECT min(ParentSorting) As MinParentSorting
     FROM Bullets
@@ -317,24 +342,22 @@ void SQLiteBackingStore::SetBulletContent(Pbid bullet, const BulletContent& bull
 }
 
 void SQLiteBackingStore::SetBulletPositionAfter(Pbid bullet, Pbid newParent, Pbid relativeTo) {
-    auto DoSetPosition = [&]() {
-        SQLiteRunningStatement rt(m->setBulletPositionAfter);
-        rt.BindArguments(bullet, newParent, relativeTo);
-        return rt.Step() == SQLITE_DONE;
-    };
+    SQLiteRunningStatement rt(m->isParentChildUnique);
+    rt.BindArguments(newParent, relativeTo);
+    rt.StepAndCheck(SQLITE_ROW);
+    auto [isResultUnique] = rt.ResultColumns<bool>();
 
-    if (!DoSetPosition()) {
-        // Errored, duplicate Bullets.ParentPbid + Bullets.ParentSorting pair
-
-        // Push Bullets.ParentSorting after `relativeTo` row, to give space to the to-be-repositioned row
-        {
-            SQLiteRunningStatement rt(m->pushSorting);
-            rt.BindArguments(newParent, relativeTo);
-            rt.StepUntilDone();
-        }
-
-        DoSetPosition();
+    if (!isResultUnique) {
+        // Errored, duplicate Bullets.ParentPbid + Bullets.ParentSorting pair, therefore
+        // push Bullets.ParentSorting after `relativeTo` row, to give space to the to-be-repositioned row
+        SQLiteRunningStatement rt(m->pushSorting);
+        rt.BindArguments(newParent, relativeTo);
+        rt.StepUntilDone();
     }
+
+    SQLiteRunningStatement rt2(m->setBulletPositionAfter);
+    rt2.BindArguments(bullet, newParent, relativeTo);
+    rt2.StepUntilDone();
 }
 
 void SQLiteBackingStore::SetBulletPositionAtBeginning(Pbid bullet, Pbid newParent) {

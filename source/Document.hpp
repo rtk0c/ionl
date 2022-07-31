@@ -54,10 +54,6 @@ struct Bullet {
     /* Document linked */ Rbid rbid;
     Pbid pbid;
     Pbid parentPbid;
-    // TODO do we actually want these two in memory? keeping them in sync with database is difficult
-    // (requires passing extra data through BackingStore through every modification function)
-    std::chrono::time_point<std::chrono::system_clock> creationTime;
-    std::chrono::time_point<std::chrono::system_clock> modifyTime;
     BulletContent content;
     std::vector<Pbid> children;
     bool expanded = true;

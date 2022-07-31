@@ -136,7 +136,7 @@ SQLiteBackingStore::SQLiteBackingStore(const char* dbPath)
     m->commitTransaction.Initialize(m->database, "COMMIT TRANSACTION");
     m->rollbackTransaction.Initialize(m->database, "ROLLBACK TRANSACTION");
 
-    m->getBulletContent.Initialize(m->database, "SELECT CreationTime, ModifyTime, ContentType, ContentValue FROM Bullets WHERE Bullets.Pbid = ?1"sv);
+    m->getBulletContent.Initialize(m->database, "SELECT ContentType, ContentValue FROM Bullets WHERE Bullets.Pbid = ?1"sv);
     m->getBulletParent.Initialize(m->database, "SELECT ParentPbid FROM Bullets WHERE Bullets.Pbid = ?1"sv);
     m->getBulletChildren.Initialize(m->database, R"""(
 SELECT Bullets.Pbid
@@ -235,22 +235,18 @@ Bullet SQLiteBackingStore::FetchBullet(Pbid pbid) {
         rt.BindArguments(pbid);
 
         rt.StepAndCheck(SQLITE_ROW);
-
-        using Time = SQLiteRunningStatement::TpFromDateTime;
-        auto [creationTime, modifyTime, contentType] = rt.ResultColumns<Time, Time, BulletType>();
-        result.creationTime = creationTime;
-        result.modifyTime = modifyTime;
+        auto [contentType] = rt.ResultColumns<BulletType>();
         switch (contentType) {
             case BulletType::Textual:
             default: {
-                auto content = rt.ResultColumn<const char*>(/*4th*/ 3);
+                auto content = rt.ResultColumn<const char*>(/*2nd*/ 1);
                 result.content.v = BulletContentTextual{
                     .text = content ? content : "",
                 };
             } break;
 
             case BulletType::Mirror: {
-                auto refereePbid = (Pbid)rt.ResultColumn<int64_t>(/*4th*/ 3);
+                auto refereePbid = (Pbid)rt.ResultColumn<int64_t>(/*2nd*/ 1);
                 result.content.v = BulletContentMirror{
                     .referee = refereePbid,
                 };

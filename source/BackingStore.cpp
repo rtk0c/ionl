@@ -380,19 +380,23 @@ WriteDelayedBackingStore::WriteDelayedBackingStore(SQLiteBackingStore& receiver)
 WriteDelayedBackingStore::~WriteDelayedBackingStore() = default;
 
 Bullet WriteDelayedBackingStore::FetchBullet(Pbid pbid) {
+    FlushOps();
     return mReceiver->FetchBullet(pbid);
 }
 
 Pbid WriteDelayedBackingStore::FetchParentOfBullet(Pbid bullet) {
+    FlushOps();
     return mReceiver->FetchParentOfBullet(bullet);
 }
 
 std::vector<Pbid> WriteDelayedBackingStore::FetchChildrenOfBullet(Pbid bullet) {
+    FlushOps();
     return mReceiver->FetchChildrenOfBullet(bullet);
 }
 
 Pbid WriteDelayedBackingStore::InsertEmptyBullet() {
     // TODO delay this by returning a bullet with "unallocated" pbid
+    FlushOps();
     return mReceiver->InsertEmptyBullet();
 }
 
@@ -429,6 +433,10 @@ void WriteDelayedBackingStore::ClearOps() {
 }
 
 void WriteDelayedBackingStore::FlushOps() {
+    if (mQueuedOps.empty()) {
+        return;
+    }
+
     mReceiver->BeginTransaction();
 
     robin_hood::unordered_set<Pbid> lastSeenSetBulletContent;

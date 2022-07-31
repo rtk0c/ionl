@@ -279,18 +279,16 @@ void SQLiteBackingStore::DeleteBullet(Pbid bullet) {
 void SQLiteBackingStore::SetBulletContent(Pbid bullet, const BulletContent& bulletContent) {
     SQLiteRunningStatement rt(m->setBulletContent);
     rt.BindArgument(1, bullet);
-    std::visit(
-        Overloaded{
-            [&](const BulletContentTextual& bc) {
-                rt.BindArgument(2, (int)BulletType::Textual);
-                rt.BindArgument(3, bc.text);
-            },
-            [&](const BulletContentMirror& bc) {
-                rt.BindArgument(2, (int)BulletType::Mirror);
-                rt.BindArgument(3, (int64_t)bc.referee);
-            },
+    ::VisitVariantOverloaded(
+        bulletContent.v,
+        [&](const BulletContentTextual& bc) {
+            rt.BindArgument(2, (int)BulletType::Textual);
+            rt.BindArgument(3, bc.text);
         },
-        bulletContent.v);
+        [&](const BulletContentMirror& bc) {
+            rt.BindArgument(2, (int)BulletType::Mirror);
+            rt.BindArgument(3, (int64_t)bc.referee);
+        });
     rt.StepUntilDoneOrError();
 }
 
@@ -298,4 +296,94 @@ void SQLiteBackingStore::SetBulletPosition(Pbid bullet, Pbid newParent, int newI
     SQLiteRunningStatement rt(m->setBulletPosition);
     rt.BindArguments(bullet, newParent, newIndex);
     rt.StepUntilDoneOrError();
+}
+
+struct DbopDeleteBullet {
+    Pbid bullet;
+};
+struct DbopSetBulletContent {
+    Pbid bullet;
+    const BulletContent* bulletContent;
+};
+struct DbopSetBulletPosition {
+    Pbid bullet;
+    Pbid newParent;
+    int newIndex;
+};
+
+struct WriteDelayedBackingStore::QueuedOperation {
+    std::variant<
+        DbopDeleteBullet,
+        DbopSetBulletContent,
+        DbopSetBulletPosition>
+        v;
+};
+
+WriteDelayedBackingStore::WriteDelayedBackingStore(SQLiteBackingStore& receiver)
+    : mReceiver{ &receiver } //
+{
+}
+
+WriteDelayedBackingStore::~WriteDelayedBackingStore() = default;
+
+Bullet WriteDelayedBackingStore::FetchBullet(Pbid pbid) {
+    return mReceiver->FetchBullet(pbid);
+}
+
+Pbid WriteDelayedBackingStore::FetchParentOfBullet(Pbid bullet) {
+    return mReceiver->FetchParentOfBullet(bullet);
+}
+
+std::vector<Pbid> WriteDelayedBackingStore::FetchChildrenOfBullet(Pbid bullet) {
+    return mReceiver->FetchChildrenOfBullet(bullet);
+}
+
+Pbid WriteDelayedBackingStore::InsertEmptyBullet() {
+    // TODO delay this by returning a bullet with "unallocated" pbid
+    return mReceiver->InsertEmptyBullet();
+}
+
+void WriteDelayedBackingStore::DeleteBullet(Pbid bullet) {
+    mQueuedOps.push_back(QueuedOperation{
+        .v = DbopDeleteBullet{ bullet },
+    });
+}
+
+void WriteDelayedBackingStore::SetBulletContent(Pbid bullet, const BulletContent& bulletContent) {
+    mQueuedOps.push_back(QueuedOperation{
+        .v = DbopSetBulletContent{ bullet, &bulletContent },
+    });
+}
+
+void WriteDelayedBackingStore::SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) {
+    mQueuedOps.push_back(QueuedOperation{
+        .v = DbopSetBulletPosition{ bullet, newParent, newIndex },
+    });
+}
+
+bool WriteDelayedBackingStore::HasUnflushedOps() const {
+    return !mQueuedOps.empty();
+}
+
+void WriteDelayedBackingStore::ClearOps() {
+    mQueuedOps.clear();
+}
+
+void WriteDelayedBackingStore::FlushOps() {
+    mReceiver->BeginTransaction();
+    for (auto& op : mQueuedOps) {
+        ::VisitVariantOverloaded(
+            op.v,
+            [&](const DbopDeleteBullet& op) {
+                mReceiver->DeleteBullet(op.bullet);
+            },
+            [&](const DbopSetBulletContent& op) {
+                mReceiver->SetBulletContent(op.bullet, *op.bulletContent);
+            },
+            [&](const DbopSetBulletPosition& op) {
+                mReceiver->SetBulletPosition(op.bullet, op.newParent, op.newIndex);
+            });
+    }
+    mQueuedOps.clear();
+    mReceiver->CommitTransaction();
 }

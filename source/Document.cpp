@@ -10,12 +10,10 @@
 using namespace std::literals;
 
 Ionl::BulletType Ionl::BulletContent::GetType() const {
-    return std::visit(
-        Overloaded{
-            [](const BulletContentTextual&) { return BulletType::Textual; },
-            [](const BulletContentMirror&) { return BulletType::Mirror; },
-        },
-        v);
+    return ::VisitVariantOverloaded(
+        v,
+        [](const BulletContentTextual&) { return BulletType::Textual; },
+        [](const BulletContentMirror&) { return BulletType::Mirror; });
 }
 
 bool Ionl::Bullet::IsRootBullet() const {

@@ -1,22 +1,163 @@
-#include "App.hpp"
+#include "BackingStore.hpp"
+#include "Document.hpp"
+#include "Utils.hpp"
+#include "WidgetMisc.hpp"
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
 #include <glad/glad.h>
 #include <imgui.h>
+#include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
 #include <../res/bindings/imgui_impl_glfw.h>
 #include <../res/bindings/imgui_impl_opengl3.h>
 
-#define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
-#include <../res/bindings/imgui_impl_glfw.cpp>
-#include <../res/bindings/imgui_impl_opengl3.cpp>
-
 static void GlfwErrorCallback(int error, const char* description) {
     fprintf(stderr, "Glfw Error %d: %s\n", error, description);
+}
+
+namespace Ionl {
+class DocumentView {
+private:
+    Ionl::Document* mDocument;
+    Ionl::Bullet* mCurrentBullet;
+
+public:
+    DocumentView(Ionl::Document& doc);
+
+    Ionl::Document& GetDocument() { return *mDocument; }
+    const Ionl::Document& GetDocument() const { return *mDocument; }
+    Ionl::Bullet& GetCurrentBullet() { return *mCurrentBullet; }
+    const Ionl::Bullet& GetCurrentBullet() const { return *mCurrentBullet; }
+
+    void Show();
+
+private:
+    struct ShowContext;
+    void ShowBullet(ShowContext& ctx, Ionl::Bullet& bullet);
+};
+} // namespace Ionl
+
+Ionl::DocumentView::DocumentView(Ionl::Document& doc)
+    : mDocument{ &doc }
+    , mCurrentBullet{ &doc.GetRoot() } {
+}
+
+// TODO move to config file
+constexpr int kConfMaxFetchCount = 100;
+constexpr int kConfMaxFetchDepth = 6;
+
+struct Ionl::DocumentView::ShowContext {
+    size_t i = 0;
+};
+
+void Ionl::DocumentView::Show() {
+    ShowContext ctx;
+
+    for (Pbid childPbid : mCurrentBullet->children) {
+        auto& child = mDocument->FetchBulletByPbid(childPbid);
+        ShowBullet(ctx, child);
+    }
+    if (ImGui::Button("+")) {
+        auto& child = mDocument->CreateBullet();
+        mDocument->ReparentBullet(child, *mCurrentBullet, mCurrentBullet->children.size());
+    }
+}
+
+void Ionl::DocumentView::ShowBullet(ShowContext& ctx, Bullet& bullet) {
+    ImGui::PushID(ctx.i);
+    ImGui::Bullet();
+    ImGui::SameLine();
+    std::visit(
+        Overloaded{
+            [&](BulletContentTextual& bc) {
+                if (ImGui::InputText("BulletContent", &bc.text)) {
+                    bullet.document->UpdateBulletContent(bullet);
+                }
+            },
+            [&](BulletContentMirror& bc) {
+                // TODO
+            },
+        },
+        bullet.content.v);
+
+    ImGui::Indent();
+    for (Pbid childPbid : bullet.children) {
+        auto& child = mDocument->FetchBulletByPbid(childPbid);
+        ShowBullet(ctx, child);
+    }
+    if (ImGui::Button("+")) {
+        auto& child = mDocument->CreateBullet();
+        mDocument->ReparentBullet(child, bullet, bullet.children.size());
+    }
+    ImGui::Unindent();
+
+    ImGui::PopID();
+    ++ctx.i;
+}
+
+struct AppView {
+    Ionl::DocumentView view;
+    bool windowOpen = true;
+};
+
+struct AppState {
+    Ionl::SQLiteBackingStore storeActual;
+    Ionl::WriteDelayedBackingStore storeFacade;
+    Ionl::Document document;
+    std::vector<AppView> views;
+
+    AppState()
+        : storeActual("./notebook.sqlite3")
+        , storeFacade(storeActual)
+        , document(storeFacade) //
+    {
+        views.push_back(AppView{
+            .view = Ionl::DocumentView(document),
+            .windowOpen = true,
+        });
+    }
+};
+
+static const std::string& ResolveContentToText(Ionl::Document& document, const Ionl::BulletContent& content) {
+    if (auto bc = std::get_if<Ionl::BulletContentTextual>(&content.v)) {
+        return bc->text;
+    } else if (auto bc = std::get_if<Ionl::BulletContentMirror>(&content.v)) {
+        auto& that = document.FetchBulletByPbid(bc->referee);
+        return ResolveContentToText(document, that.content);
+    } else {
+        assert(false);
+    }
+}
+
+static void ShowAppViews(AppState& as) {
+    for (size_t i = 0; i < as.views.size(); ++i) {
+        auto& dv = as.views[i];
+        auto& currBullet = dv.view.GetCurrentBullet();
+
+        // TODO handle unicode truncation gracefully
+        char windowName[256];
+        if (currBullet.IsRootBullet()) {
+            snprintf(windowName, sizeof(windowName), "Infinite Outliner###DocView%zu", i);
+        } else {
+            auto& text = ResolveContentToText(as.document, currBullet.content);
+            if (text.empty()) {
+                snprintf(windowName, sizeof(windowName), "(Empty)###DocView%zu", i);
+            } else if (text.size() > 10) {
+                snprintf(windowName, sizeof(windowName), "%*.s...###DocView%zu", 10, text.c_str(), i);
+            } else {
+                snprintf(windowName, sizeof(windowName), "%s###DocView%zu", text.c_str(), i);
+            }
+        }
+
+        ImGui::Begin(windowName, &dv.windowOpen);
+        dv.view.Show();
+        ImGui::End();
+    }
 }
 
 int main() {
@@ -64,26 +205,43 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
-    App app;
+    AppState as;
+    double writeQueueBeginTime = 0.0;
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+
+        bool oldHasUnflushedOps = as.storeFacade.HasUnflushedOps();
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        app.Show();
+        ShowAppViews(as);
 
         ImGui::Render();
-        int display_w, display_h;
-        glfwGetFramebufferSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
-        auto clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-        glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
+        int fbWidth, fbHeight;
+        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        glViewport(0, 0, fbWidth, fbHeight);
+        ImVec4 clearColor(0.45f, 0.55f, 0.60f, 1.00f);
+        glClearColor(clearColor.x * clearColor.w, clearColor.y * clearColor.w, clearColor.z * clearColor.w, clearColor.w);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
         glfwSwapBuffers(window);
+
+        double currTime = glfwGetTime();
+        bool newHasUnflushedOps = as.storeFacade.HasUnflushedOps();
+
+        if (oldHasUnflushedOps == false &&
+            newHasUnflushedOps == true)
+        {
+            // On rising edge of WriteDelayedBackingStore::HasUnflushedOps(),
+            writeQueueBeginTime = currTime;
+        }
+         if (writeQueueBeginTime != 0.0 && (currTime - writeQueueBeginTime) > 1.0 /*seconds*/) {
+            writeQueueBeginTime = 0.0;
+            as.storeFacade.FlushOps();
+        }
     }
 
     ImGui_ImplOpenGL3_Shutdown();

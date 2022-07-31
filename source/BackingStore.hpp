@@ -41,4 +41,28 @@ public:
     void SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) override;
 };
 
+class WriteDelayedBackingStore : public IBackingStore {
+private:
+    struct QueuedOperation;
+
+    SQLiteBackingStore* mReceiver;
+    std::vector<QueuedOperation> mQueuedOps;
+
+public:
+    WriteDelayedBackingStore(SQLiteBackingStore& receiver);
+    ~WriteDelayedBackingStore();
+
+    Bullet FetchBullet(Pbid pbid) override;
+    Pbid FetchParentOfBullet(Pbid bullet) override;
+    std::vector<Pbid> FetchChildrenOfBullet(Pbid bullet) override;
+    Pbid InsertEmptyBullet() override;
+    void DeleteBullet(Pbid bullet) override;
+    void SetBulletContent(Pbid bullet, const BulletContent& bulletContent) override;
+    void SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) override;
+
+    bool HasUnflushedOps() const;
+    void ClearOps();
+    void FlushOps();
+};
+
 } // namespace Ionl

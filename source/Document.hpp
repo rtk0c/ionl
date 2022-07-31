@@ -17,8 +17,13 @@ using Pbid = size_t;
 /// Runtime bullet ID (transient)
 using Rbid = size_t;
 
-// A `Bullet` object with pbid and rbid both as 0 is automatically created on startup, and saved to the
-// database (if not exists) as the root bullet. This bullet may not be deleted.
+// A number for `PRAGMA user_vesrion`, representing the current database version. Increment when the table format changes.
+#define CURRENT_DATABASE_VERSION 1
+// NOTE: macros for string literal concatenation only
+#define ROOT_BULLET_PBID 1
+#define ROOT_BULLET_RBID 0
+constexpr Ionl::Pbid kRootBulletPbid = ROOT_BULLET_PBID;
+constexpr Ionl::Rbid kRootBulletRbid = ROOT_BULLET_RBID;
 
 /// NOTE: do not change these values, they are a part of the on-disk format
 enum class BulletType {
@@ -60,18 +65,16 @@ struct Bullet {
     bool IsRootBullet() const;
 };
 
+class IBackingStore;
 class Document {
 private:
-    class BackingDataStore;
-    BackingDataStore* mStore;
-
+    IBackingStore* mStore;
     std::deque<std::optional<Bullet>> mBullets; // Index by bullet's rbid
     std::vector<size_t> mFreeRbids;
     robin_hood::unordered_flat_map<Pbid, Rbid> mPtoRmap;
 
 public:
-    Document();
-    ~Document();
+    Document(IBackingStore& store);
 
     Bullet& GetRoot();
     const Bullet& GetRoot() const;

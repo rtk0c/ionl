@@ -1,7 +1,9 @@
 #pragma once
 
+#include "BackingStore.hpp"
 #include "Document.hpp"
 
+#include <memory>
 #include <vector>
 
 namespace Ionl {
@@ -30,6 +32,7 @@ private:
 
 class App {
 private:
+    Ionl::SQLiteBackingStore store;
     Ionl::Document document;
 
     struct View;

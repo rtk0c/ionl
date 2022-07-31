@@ -60,7 +60,7 @@ void Ionl::DocumentView::ShowBullet(ShowContext& ctx, Bullet& bullet) {
         mDocument->ReparentBullet(child, bullet, bullet.children.size());
     }
     ImGui::Unindent();
-    
+
     ImGui::PopID();
     ++ctx.i;
 }
@@ -70,7 +70,10 @@ struct App::View {
     bool windowOpen = true;
 };
 
-App::App() {
+App::App()
+    : store("./notebook.sqlite3")
+    , document(store) //
+{
     views.push_back(View{
         .view = Ionl::DocumentView(document),
         .windowOpen = true,

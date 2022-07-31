@@ -6,15 +6,14 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include <../res/bindings/imgui_impl_glfw.h>
+#include <../res/bindings/imgui_impl_opengl3.h>
 #include <glad/glad.h>
 #include <imgui.h>
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
 #include <string>
-
-#include <../res/bindings/imgui_impl_glfw.h>
-#include <../res/bindings/imgui_impl_opengl3.h>
 
 static void GlfwErrorCallback(int error, const char* description) {
     fprintf(stderr, "Glfw Error %d: %s\n", error, description);
@@ -78,6 +77,32 @@ void Ionl::DocumentView::ShowBullet(ShowContext& ctx, Bullet& bullet) {
                 if (ImGui::InputText("BulletContent", &bc.text)) {
                     bullet.document->UpdateBulletContent(bullet);
                 }
+                // TODO this can cause segfault if reparent happens to cause std::vector to reallocate (parent is still iterating)
+                if (ImGui::Button("First")) {
+                    auto& parent = mDocument->FetchBulletByPbid(bullet.parentPbid);
+                    mDocument->ReparentBullet(bullet, parent, 0);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Back")) {
+                    auto& parent = mDocument->FetchBulletByPbid(bullet.parentPbid);
+                    mDocument->ReparentBullet(bullet, parent, parent.children.size() - 1);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("+1")) {
+                    auto& parent = mDocument->FetchBulletByPbid(bullet.parentPbid);
+                    auto idx = std::find(parent.children.begin(), parent.children.end(), bullet.pbid) - parent.children.begin();
+                    if (idx != parent.children.size() - 1) {
+                        mDocument->ReparentBullet(bullet, parent, idx + 1);
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("-1")) {
+                    auto& parent = mDocument->FetchBulletByPbid(bullet.parentPbid);
+                    auto idx = std::find(parent.children.begin(), parent.children.end(), bullet.pbid) - parent.children.begin();
+                    if (idx != 0) {
+                        mDocument->ReparentBullet(bullet, parent, idx - 1);
+                    }
+                }
             },
             [&](BulletContentMirror& bc) {
                 // TODO
@@ -114,7 +139,7 @@ struct AppState {
     AppState()
         : storeActual("./notebook.sqlite3")
         , storeFacade(storeActual)
-        , document(storeFacade) //
+        , document(storeActual) //
     {
         views.push_back(AppView{
             .view = Ionl::DocumentView(document),
@@ -206,17 +231,22 @@ int main() {
     ImGui_ImplOpenGL3_Init(glsl_version);
 
     AppState as;
-    double writeQueueBeginTime = 0.0;
+    double lastWriteTime = 0.0;
+    double lastIdleTime = 0.0;
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-
-        bool oldHasUnflushedOps = as.storeFacade.HasUnflushedOps();
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        double currTime = glfwGetTime();
+        // "ufops" stands for UnFlushed OPerationS
+        auto ufopsCntBeforeFrame = as.storeFacade.GetUnflushedOpsCount();
+
         ShowAppViews(as);
+
+        auto ufopsCntAfterFrame = as.storeFacade.GetUnflushedOpsCount();
 
         ImGui::Render();
         int fbWidth, fbHeight;
@@ -229,19 +259,23 @@ int main() {
 
         glfwSwapBuffers(window);
 
-        double currTime = glfwGetTime();
-        bool newHasUnflushedOps = as.storeFacade.HasUnflushedOps();
+        if (ufopsCntBeforeFrame != ufopsCntAfterFrame) {
+            lastIdleTime = currTime;
+        }
 
-        if (oldHasUnflushedOps == false &&
-            newHasUnflushedOps == true)
-        {
-            // On rising edge of WriteDelayedBackingStore::HasUnflushedOps(),
-            writeQueueBeginTime = currTime;
+        if (ufopsCntAfterFrame > 0) {
+            // Save strategy:
+            if ((currTime - lastIdleTime) > /*seconds*/ 1.0 || // ... after 1 second of idle
+                (currTime - lastWriteTime) > /*seconds*/ 10.0) // ... or every 10 seconds
+            {
+                lastWriteTime = currTime;
+                as.storeFacade.FlushOps();
+            }
         }
-         if (writeQueueBeginTime != 0.0 && (currTime - writeQueueBeginTime) > 1.0 /*seconds*/) {
-            writeQueueBeginTime = 0.0;
-            as.storeFacade.FlushOps();
-        }
+    }
+
+    if (as.storeFacade.GetUnflushedOpsCount() > 0) {
+        as.storeFacade.FlushOps();
     }
 
     ImGui_ImplOpenGL3_Shutdown();

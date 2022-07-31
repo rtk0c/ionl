@@ -26,8 +26,10 @@ public:
     SQLiteStatement getBulletChildren;
     SQLiteStatement insertBullet;
     SQLiteStatement deleteBullet;
+    SQLiteStatement pushSorting;
     SQLiteStatement setBulletContent;
-    SQLiteStatement setBulletPosition;
+    SQLiteStatement setBulletPositionAtBeginning;
+    SQLiteStatement setBulletPositionAfter;
 
 public:
     void SetDatabaseUserVersion() {
@@ -137,14 +139,15 @@ SQLiteBackingStore::SQLiteBackingStore(const char* dbPath)
     m->getBulletContent.Initialize(m->database, "SELECT CreationTime, ModifyTime, ContentType, ContentValue FROM Bullets WHERE Bullets.Pbid = ?1"sv);
     m->getBulletParent.Initialize(m->database, "SELECT ParentPbid FROM Bullets WHERE Bullets.Pbid = ?1"sv);
     m->getBulletChildren.Initialize(m->database, R"""(
-SELECT Bullets.Pbid FROM Bullets
+SELECT Bullets.Pbid
+FROM Bullets
 WHERE Bullets.ParentPbid = ?1
 ORDER BY ParentSorting
 )"""sv);
 
     m->insertBullet.Initialize(m->database, R"""(
 INSERT INTO Bullets(ParentPbid, ParentSorting, CreationTime, ModifyTime)
-SELECT ?1, max(ParentSorting) + 1, datetime('now'), datetime('now')
+SELECT ?1, max(ParentSorting) + 10, datetime('now'), datetime('now')
     FROM Bullets
     WHERE ParentPbid = ?1
 )"""sv);
@@ -152,6 +155,18 @@ SELECT ?1, max(ParentSorting) + 1, datetime('now'), datetime('now')
     m->deleteBullet.Initialize(m->database, R"""(
 DELETE FROM Bullets
 WHERE Pbid = ?1
+)"""sv);
+
+    m->pushSorting.Initialize(m->database, R"""(
+UPDATE Bullets
+SET ParentSorting = ParentSorting + 10
+FROM (
+    SELECT ParentSorting AS Sorting
+    FROM Bullets
+    WHERE Pbid = ?2
+) AS _Anchor
+WHERE ParentPbid = ?1
+  AND ParentSorting > _Anchor.Sorting
 )"""sv);
 
     m->setBulletContent.Initialize(m->database, R"""(
@@ -162,17 +177,30 @@ SET ModifyTime = datetime('now'),
 WHERE Pbid = ?1
 )"""sv);
 
-    m->setBulletPosition.Initialize(m->database, R"""(
-UPDATE BULLETS
+    m->setBulletPositionAtBeginning.Initialize(m->database, R"""(
+UPDATE Bullets
 SET ModifyTime = datetime('now'),
     ParentPbid = ?2,
-    ParentSorting = ?3
-WHERE Pbid = ?1;
+    ParentSorting = ifnull(_Minimum.MinParentSorting, 1) - 1
+FROM (
+    SELECT min(ParentSorting) As MinParentSorting
+    FROM Bullets
+    WHERE ParentPbid = ?2
+) AS _Minimum
+WHERE Pbid = ?1
+)"""sv);
 
-UPDATE BULLETS
-SET ParentSorting = ParentSorting + 1
-WHERE ParentPbid = ?2
-  AND ParentSorting > ?3;
+    m->setBulletPositionAfter.Initialize(m->database, R"""(
+UPDATE Bullets
+SET ModifyTime = datetime('now'),
+    ParentPbid = ?2,
+    ParentSorting = _Anchor.Sorting + 1
+FROM (
+    SELECT ParentSorting AS Sorting
+    FROM Bullets
+    WHERE Pbid = ?3
+) AS _Anchor
+WHERE Pbid = ?1
 )"""sv);
 }
 
@@ -265,7 +293,7 @@ std::vector<Pbid> SQLiteBackingStore::FetchChildrenOfBullet(Pbid bullet) {
 Pbid SQLiteBackingStore::InsertEmptyBullet() {
     SQLiteRunningStatement rt(m->insertBullet);
     rt.BindArguments(kRootBulletPbid, nullptr);
-    rt.StepUntilDoneOrError();
+    rt.StepUntilDone();
 
     return sqlite3_last_insert_rowid(m->database);
 }
@@ -273,7 +301,7 @@ Pbid SQLiteBackingStore::InsertEmptyBullet() {
 void SQLiteBackingStore::DeleteBullet(Pbid bullet) {
     SQLiteRunningStatement rt(m->deleteBullet);
     rt.BindArguments(bullet);
-    rt.StepUntilDoneOrError();
+    rt.StepUntilDone();
 }
 
 void SQLiteBackingStore::SetBulletContent(Pbid bullet, const BulletContent& bulletContent) {
@@ -289,13 +317,34 @@ void SQLiteBackingStore::SetBulletContent(Pbid bullet, const BulletContent& bull
             rt.BindArgument(2, (int)BulletType::Mirror);
             rt.BindArgument(3, (int64_t)bc.referee);
         });
-    rt.StepUntilDoneOrError();
+    rt.StepUntilDone();
 }
 
-void SQLiteBackingStore::SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) {
-    SQLiteRunningStatement rt(m->setBulletPosition);
-    rt.BindArguments(bullet, newParent, newIndex);
-    rt.StepUntilDoneOrError();
+void SQLiteBackingStore::SetBulletPositionAfter(Pbid bullet, Pbid newParent, Pbid relativeTo) {
+    auto DoSetPosition = [&]() {
+        SQLiteRunningStatement rt(m->setBulletPositionAfter);
+        rt.BindArguments(bullet, newParent, relativeTo);
+        return rt.Step() == SQLITE_DONE;
+    };
+
+    if (!DoSetPosition()) {
+        // Errored, duplicate Bullets.ParentPbid + Bullets.ParentSorting pair
+
+        // Push Bullets.ParentSorting after `relativeTo` row, to give space to the to-be-repositioned row
+        {
+            SQLiteRunningStatement rt(m->pushSorting);
+            rt.BindArguments(newParent, relativeTo);
+            rt.StepUntilDone();
+        }
+
+        DoSetPosition();
+    }
+}
+
+void SQLiteBackingStore::SetBulletPositionAtBeginning(Pbid bullet, Pbid newParent) {
+    SQLiteRunningStatement rt(m->setBulletPositionAtBeginning);
+    rt.BindArguments(bullet, newParent);
+    rt.StepUntilDone();
 }
 
 struct DbopDeleteBullet {
@@ -308,11 +357,19 @@ struct DbopSetBulletContent {
 struct DbopSetBulletPosition {
     Pbid bullet;
     Pbid newParent;
-    int newIndex;
+    // Mode 1: relative mode, when `relativeTo` is set to a valid value, this represents a SetBulletPositionAfter() call
+    // Mode 2: beginning mode, when `relativeTo` is invalid, this represents a SetBulletPositionAtBeginning() all
+    //         this is also the default value
+    Pbid relativeTo = (size_t)-1;
+
+    bool IsRelativeMode() const {
+        return relativeTo != (size_t)-1;
+    }
 };
 
 struct WriteDelayedBackingStore::QueuedOperation {
     std::variant<
+        std::monostate,
         DbopDeleteBullet,
         DbopSetBulletContent,
         DbopSetBulletPosition>
@@ -355,14 +412,20 @@ void WriteDelayedBackingStore::SetBulletContent(Pbid bullet, const BulletContent
     });
 }
 
-void WriteDelayedBackingStore::SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) {
+void WriteDelayedBackingStore::SetBulletPositionAfter(Pbid bullet, Pbid newParent, Pbid relativeTo) {
     mQueuedOps.push_back(QueuedOperation{
-        .v = DbopSetBulletPosition{ bullet, newParent, newIndex },
+        .v = DbopSetBulletPosition{ bullet, newParent, relativeTo },
     });
 }
 
-bool WriteDelayedBackingStore::HasUnflushedOps() const {
-    return !mQueuedOps.empty();
+void WriteDelayedBackingStore::SetBulletPositionAtBeginning(Pbid bullet, Pbid newParent) {
+    mQueuedOps.push_back(QueuedOperation{
+        .v = DbopSetBulletPosition{ bullet, newParent /* beginning mode */ },
+    });
+}
+
+size_t WriteDelayedBackingStore::GetUnflushedOpsCount() const {
+    return mQueuedOps.size();
 }
 
 void WriteDelayedBackingStore::ClearOps() {
@@ -371,9 +434,35 @@ void WriteDelayedBackingStore::ClearOps() {
 
 void WriteDelayedBackingStore::FlushOps() {
     mReceiver->BeginTransaction();
+
+    robin_hood::unordered_set<Pbid> lastSeenSetBulletContent;
+    robin_hood::unordered_set<Pbid> lastSeenSetBulletPosition;
+
+    // Collapse duplicate events
+    for (size_t i = mQueuedOps.size(); i >= 1;) {
+        i -= 1;
+        auto& op = mQueuedOps[i];
+
+        ::VisitVariantOverloaded(
+            op.v,
+            [&](std::monostate) { assert(false); },
+            [&](const DbopDeleteBullet& dbop) {
+                // Always keep this
+            },
+            [&](const DbopSetBulletContent& dbop) {
+                auto [_, inserted] = lastSeenSetBulletContent.insert(dbop.bullet);
+                if (!inserted) op.v = {};
+            },
+            [&](const DbopSetBulletPosition& dbop) {
+                auto [_, inserted] = lastSeenSetBulletPosition.insert(dbop.bullet);
+                if (!inserted) op.v = {};
+            });
+    }
+
     for (auto& op : mQueuedOps) {
         ::VisitVariantOverloaded(
             op.v,
+            [&](std::monostate) {},
             [&](const DbopDeleteBullet& op) {
                 mReceiver->DeleteBullet(op.bullet);
             },
@@ -381,9 +470,14 @@ void WriteDelayedBackingStore::FlushOps() {
                 mReceiver->SetBulletContent(op.bullet, *op.bulletContent);
             },
             [&](const DbopSetBulletPosition& op) {
-                mReceiver->SetBulletPosition(op.bullet, op.newParent, op.newIndex);
+                if (op.IsRelativeMode()) {
+                    mReceiver->SetBulletPositionAfter(op.bullet, op.newParent, op.relativeTo);
+                } else {
+                    mReceiver->SetBulletPositionAtBeginning(op.bullet, op.newParent);
+                }
             });
     }
+
     mQueuedOps.clear();
     mReceiver->CommitTransaction();
 }

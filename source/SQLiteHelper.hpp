@@ -48,7 +48,7 @@ struct SQLiteStatement {
     sqlite3_stmt** operator&() { return &stmt; }
 
     void Initialize(sqlite3* database, std::string_view sql) {
-        int result = sqlite3_prepare(database, sql.data(), sql.size(), &stmt, nullptr);
+        int result = sqlite3_prepare_v2(database, sql.data(), sql.size(), &stmt, nullptr);
         if (result != SQLITE_OK) {
             std::string msg;
             msg += "Failed to prepare SQLite3 statement, error message:\n";
@@ -69,7 +69,7 @@ struct SQLiteStatement {
 struct SQLiteRunningStatement {
     sqlite3_stmt* stmt;
 
-    SQLiteRunningStatement(SQLiteStatement& stmt)
+    SQLiteRunningStatement(const SQLiteStatement& stmt)
         : stmt{ stmt.stmt } {
     }
 
@@ -126,7 +126,7 @@ struct SQLiteRunningStatement {
         assert(errCode == forErrCode);
     }
 
-    void StepUntilDoneOrError() {
+    void StepUntilDone() {
         while (true) {
             int err = sqlite3_step(stmt);
             // SQLITE_DONE, and all others are error codes

@@ -86,7 +86,9 @@ public:
     Bullet& CreateBullet();
     void DeleteBullet(Bullet& bullet);
     void UpdateBulletContent(Bullet& bullet);
-    void ReparentBullet(Bullet& bullet, Bullet& newParent, int index);
+    /// If the old and new parent bullet is the same, behaves as-if the bullet is first removed
+    /// from the parent, and then added at the given index.
+    void ReparentBullet(Bullet& bullet, Bullet& newParent, size_t index);
 
 private:
     Bullet* Store(Bullet bullet);

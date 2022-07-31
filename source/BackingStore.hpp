@@ -16,7 +16,9 @@ public:
     virtual Pbid InsertEmptyBullet() = 0;
     virtual void DeleteBullet(Pbid bullet) = 0;
     virtual void SetBulletContent(Pbid bullet, const BulletContent& bulletContent) = 0;
-    virtual void SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) = 0;
+    // TODO merge these two ops into one?
+    virtual void SetBulletPositionAfter(Pbid bullet, Pbid newParent, Pbid relativeTo) = 0;
+    virtual void SetBulletPositionAtBeginning(Pbid bullet, Pbid newParent) = 0;
 };
 
 class SQLiteBackingStore : public IBackingStore {
@@ -38,7 +40,8 @@ public:
     Pbid InsertEmptyBullet() override;
     void DeleteBullet(Pbid bullet) override;
     void SetBulletContent(Pbid bullet, const BulletContent& bulletContent) override;
-    void SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) override;
+    void SetBulletPositionAfter(Pbid bullet, Pbid newParent, Pbid relativeTo) override;
+    void SetBulletPositionAtBeginning(Pbid bullet, Pbid newParent) override;
 };
 
 class WriteDelayedBackingStore : public IBackingStore {
@@ -58,9 +61,10 @@ public:
     Pbid InsertEmptyBullet() override;
     void DeleteBullet(Pbid bullet) override;
     void SetBulletContent(Pbid bullet, const BulletContent& bulletContent) override;
-    void SetBulletPosition(Pbid bullet, Pbid newParent, int newIndex) override;
+    void SetBulletPositionAfter(Pbid bullet, Pbid newParent, Pbid relativeTo) override;
+    void SetBulletPositionAtBeginning(Pbid bullet, Pbid newParent) override;
 
-    bool HasUnflushedOps() const;
+    size_t GetUnflushedOpsCount() const;
     void ClearOps();
     void FlushOps();
 };

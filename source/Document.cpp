@@ -86,9 +86,33 @@ void Ionl::Document::UpdateBulletContent(Bullet& bullet) {
     mStore->SetBulletContent(bullet.pbid, bullet.content);
 }
 
-void Ionl::Document::ReparentBullet(Bullet& bullet, Bullet& newParent, int index) {
+void Ionl::Document::ReparentBullet(Bullet& bullet, Bullet& newParent, size_t index) {
     // Update database
-    mStore->SetBulletPosition(bullet.pbid, newParent.pbid, index);
+    // TODO simplify this convoluted logic, maybe replace PositionAfterThing logic with PositionReplace?
+    if (index == 0) {
+        mStore->SetBulletPositionAtBeginning(bullet.pbid, newParent.pbid);
+    } else {
+        size_t relativePbid;
+
+        if (bullet.parentPbid == newParent.pbid) {
+            auto oldIndex = std::find(newParent.children.begin(), newParent.children.end(), bullet.pbid) - newParent.children.begin();
+            if (index > oldIndex) {
+                relativePbid = newParent.children[index];
+                goto doUpdate;
+            } else if (index == oldIndex) {
+                // Fast path to noop
+                return;
+            }
+        }
+
+        // - If `newParent.children` is empty, then by contract `index` must be 0 (appending at end position), which is catched by the above case
+        // - Otherwise, `index` must be non-zero in this else clause (again 0 is catched by the above case)
+        //   therefore, `index - 1` is always valid
+        relativePbid = newParent.children[index - 1];
+
+    doUpdate:
+        mStore->SetBulletPositionAfter(bullet.pbid, newParent.pbid, relativePbid);
+    }
 
     // Update in-memory objects
     if (auto oldParent = GetBulletByPbid(bullet.parentPbid)) {

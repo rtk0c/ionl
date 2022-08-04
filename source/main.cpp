@@ -6,42 +6,43 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include <imgui_internal.h>
+
+#include <imgui.h>
+
 #include <../res/bindings/imgui_impl_glfw.h>
 #include <../res/bindings/imgui_impl_opengl3.h>
 #include <glad/glad.h>
-#include <imgui.h>
 #include <cassert>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <string>
+
+using namespace Ionl;
 
 static void GlfwErrorCallback(int error, const char* description) {
     fprintf(stderr, "Glfw Error %d: %s\n", error, description);
 }
 
-namespace Ionl {
 class DocumentView {
 private:
-    Ionl::Document* mDocument;
-    Ionl::Bullet* mCurrentBullet;
+    Document* mDocument;
+    Bullet* mCurrentBullet;
 
 public:
-    DocumentView(Ionl::Document& doc);
+    DocumentView(Document& doc);
 
-    Ionl::Document& GetDocument() { return *mDocument; }
-    const Ionl::Document& GetDocument() const { return *mDocument; }
-    Ionl::Bullet& GetCurrentBullet() { return *mCurrentBullet; }
-    const Ionl::Bullet& GetCurrentBullet() const { return *mCurrentBullet; }
+    Document& GetDocument() { return *mDocument; }
+    const Document& GetDocument() const { return *mDocument; }
+    Bullet& GetCurrentBullet() { return *mCurrentBullet; }
+    const Bullet& GetCurrentBullet() const { return *mCurrentBullet; }
 
     void Show();
-
-private:
-    struct ShowContext;
-    void ShowBullet(ShowContext& ctx, Ionl::Bullet& bullet);
 };
-} // namespace Ionl
 
-Ionl::DocumentView::DocumentView(Ionl::Document& doc)
+DocumentView::DocumentView(Document& doc)
     : mDocument{ &doc }
     , mCurrentBullet{ &doc.GetRoot() } {
 }
@@ -50,83 +51,203 @@ Ionl::DocumentView::DocumentView(Ionl::Document& doc)
 constexpr int kConfMaxFetchCount = 100;
 constexpr int kConfMaxFetchDepth = 6;
 
-struct Ionl::DocumentView::ShowContext {
-    size_t i = 0;
+struct ShowContext {
+    Document* document;
+    Bullet* rootBullet;
+    int depth = 0;
+    int count = 0;
 };
 
-void Ionl::DocumentView::Show() {
-    ShowContext ctx;
+struct BulletContext {
+    // Filled in by creator
+    Bullet* bullet;
 
-    for (Pbid childPbid : mCurrentBullet->children) {
-        auto& child = mDocument->FetchBulletByPbid(childPbid);
-        ShowBullet(ctx, child);
+    // Generated when calling Init()
+    BulletType bulletType;
+    ImGuiID id;
+
+    void Init() {
+        this->bulletType = bullet->content.GetType();
+        this->id = ImGui::GetCurrentWindow()->GetID(bullet->pbid);
     }
-    if (ImGui::Button("+")) {
-        auto& child = mDocument->CreateBullet();
-        mDocument->ReparentBullet(child, *mCurrentBullet, mCurrentBullet->children.size());
+};
+
+enum class BulletAction {
+    OpenCtxMenu,
+};
+
+static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
+    auto window = ImGui::GetCurrentWindow();
+
+    ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + ImVec2(20, 20) };
+    ImGui::ItemSize(bb);
+    if (!ImGui::ItemAdd(bb, bctx.bullet->pbid)) {
+        return;
+    }
+
+    // Bullet has no children, no need for collapse/expand button
+    if (bctx.bullet->children.empty()) {
+        return;
+    }
+
+    // TODO button color
+    ImGui::RenderArrow(window->DrawList, bb.GetCenter(), 0x000000, bctx.bullet->expanded ? ImGuiDir_Down : ImGuiDir_Right);
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        bctx.bullet->expanded = !bctx.bullet->expanded;
     }
 }
 
-void Ionl::DocumentView::ShowBullet(ShowContext& ctx, Bullet& bullet) {
-    ImGui::PushID(ctx.i);
-    ImGui::Bullet();
-    ImGui::SameLine();
-    std::visit(
-        Overloaded{
-            [&](BulletContentTextual& bc) {
-                if (ImGui::InputText("BulletContent", &bc.text)) {
-                    bullet.document->UpdateBulletContent(bullet);
-                }
-                // TODO this can cause segfault if reparent happens to cause std::vector to reallocate (parent is still iterating)
-                if (ImGui::Button("First")) {
-                    auto& parent = mDocument->FetchBulletByPbid(bullet.parentPbid);
-                    mDocument->ReparentBullet(bullet, parent, 0);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Back")) {
-                    auto& parent = mDocument->FetchBulletByPbid(bullet.parentPbid);
-                    mDocument->ReparentBullet(bullet, parent, parent.children.size() - 1);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("+1")) {
-                    auto& parent = mDocument->FetchBulletByPbid(bullet.parentPbid);
-                    auto idx = std::find(parent.children.begin(), parent.children.end(), bullet.pbid) - parent.children.begin();
-                    if (idx != parent.children.size() - 1) {
-                        mDocument->ReparentBullet(bullet, parent, idx + 1);
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("-1")) {
-                    auto& parent = mDocument->FetchBulletByPbid(bullet.parentPbid);
-                    auto idx = std::find(parent.children.begin(), parent.children.end(), bullet.pbid) - parent.children.begin();
-                    if (idx != 0) {
-                        mDocument->ReparentBullet(bullet, parent, idx - 1);
-                    }
-                }
-            },
-            [&](BulletContentMirror& bc) {
-                // TODO
-            },
+static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
+    auto window = ImGui::GetCurrentWindow();
+
+    ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + ImVec2(20, 20) };
+    ImGui::ItemSize(bb);
+    if (!ImGui::ItemAdd(bb, bctx.bullet->pbid)) {
+        return;
+    }
+
+    auto center = bb.GetCenter();
+
+    // TODO better colors
+    if (!bctx.bullet->expanded) {
+        window->DrawList->AddCircle(center, 8.0f, ImGui::GetColorU32(ImGuiCol_WindowBg));
+    }
+    window->DrawList->AddCircle(center, 6.0f, ImGui::GetColorU32(ImGuiCol_Text));
+
+    // TODO switch to ImGui::PushID()?
+    char popupId[256];
+    snprintf(popupId, sizeof(popupId), "BulletCtxMenu%zu", bctx.bullet->pbid);
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        // TODO zoom in
+    }
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
+    {
+        ImGui::OpenPopup(popupId);
+    }
+
+    if (ImGui::BeginPopup(popupId)) {
+        // TODO implement key combos
+        if (ImGui::MenuItem("Copy", "Ctrl+C")) {
+            // TODO
+        }
+        if (ImGui::MenuItem("Cut", "Ctrl+X")) {
+            // TODO
+        }
+        if (ImGui::MenuItem("Delete", "Backspace")) {
+            // TODO
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Copy internal link")) {
+            // TODO
+        }
+        if (ImGui::MenuItem("Copy mirror link")) {
+            // TODO
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Expand all")) {
+            // TODO
+        }
+        if (ImGui::MenuItem("Collpase all")) {
+            // TODO
+        }
+        ImGui::Separator();
+        // TODO show creation time and modify time
+        ImGui::Text("Created on UNIMPLEMENTED");
+        ImGui::Text("Last changed on UNIMPLEMENTED");
+        ImGui::EndPopup();
+    }
+
+    // TODO trigger this with left click drag
+    if (ImGui::BeginDragDropSource()) {
+        // Reason: intentionally using pointer as payload
+        ImGui::SetDragDropPayload("Ionl::Bullet", bctx.bullet, sizeof(bctx.bullet)); // NOLINT(bugprone-sizeof-expression)
+        ImGui::EndDragDropSource();
+    }
+}
+
+static void ShowBulletContent(ShowContext& gctx, BulletContext& bctx) {
+    // TODO replace with TextEdit
+    auto& bullet = *bctx.bullet;
+    ImGui::PushID(bctx.id);
+    ::VisitVariantOverloaded(
+        bullet.content.v,
+        [&](BulletContentTextual& bc) {
+            if (ImGui::InputText("BulletContent", &bc.text)) {
+                bullet.document->UpdateBulletContent(bullet);
+            }
         },
-        bullet.content.v);
-
-    ImGui::Indent();
-    for (Pbid childPbid : bullet.children) {
-        auto& child = mDocument->FetchBulletByPbid(childPbid);
-        ShowBullet(ctx, child);
-    }
-    if (ImGui::Button("+")) {
-        auto& child = mDocument->CreateBullet();
-        mDocument->ReparentBullet(child, bullet, bullet.children.size());
-    }
-    ImGui::Unindent();
-
+        [&](BulletContentMirror& bc) {
+            // TODO
+        });
     ImGui::PopID();
-    ++ctx.i;
+}
+
+static void ShowBullet(ShowContext& gctx, BulletContext& bctx) {
+    bool withinCountLimit = gctx.count < kConfMaxFetchCount;
+    if (!withinCountLimit) {
+        // TODO recycler view instead of just limiting the number of bullets to render
+        return;
+    }
+
+    if (gctx.rootBullet == bctx.bullet) {
+        // TODO show "title"
+    } else {
+        ShowBulletCollapseFlag(gctx, bctx);
+        ImGui::SameLine();
+        ShowBulletIcon(gctx, bctx);
+        ImGui::SameLine();
+        ShowBulletContent(gctx, bctx);
+    }
+
+    gctx.count += 1;
+
+    if (bctx.bullet->expanded) {
+        return;
+    }
+    bool withinDepthLimit = gctx.depth < kConfMaxFetchDepth;
+    if (withinDepthLimit) {
+        ImGui::Indent();
+        gctx.depth += 1;
+        for (Pbid childPbid : bctx.bullet->children) {
+            BulletContext childBctx;
+            childBctx.bullet = &gctx.document->FetchBulletByPbid(childPbid);
+            childBctx.Init();
+
+            ShowBullet(gctx, childBctx);
+        }
+        gctx.depth -= 1;
+        ImGui::Unindent();
+    } else {
+        ImGui::Indent();
+        // TODO show ellipses
+        ImGui::Unindent();
+    }
+}
+
+void DocumentView::Show() {
+    ShowContext gctx;
+    gctx.document = mDocument;
+    gctx.rootBullet = mCurrentBullet;
+
+    BulletContext bctx;
+    bctx.bullet = mCurrentBullet;
+    bctx.Init();
+
+    ShowBullet(gctx, bctx);
+
+    auto dragDropPayland = ImGui::GetDragDropPayload();
+    if (dragDropPayland &&
+        std::strcmp(dragDropPayland->DataType, "Ionl::Bullet"))
+    {
+        // TODO
+    }
 }
 
 struct AppView {
-    Ionl::DocumentView view;
+    DocumentView view;
     bool windowOpen = true;
 };
 
@@ -142,7 +263,7 @@ struct AppState {
         , document(storeActual) //
     {
         views.push_back(AppView{
-            .view = Ionl::DocumentView(document),
+            .view = DocumentView(document),
             .windowOpen = true,
         });
     }

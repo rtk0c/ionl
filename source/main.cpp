@@ -79,7 +79,7 @@ enum class BulletAction {
 static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
     auto window = ImGui::GetCurrentWindow();
 
-    ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + ImVec2(20, 20) };
+    ImRect bb{ window->DC.CursorPos + ImVec2(5, 5), window->DC.CursorPos + ImVec2(15, 15) };
     ImGui::ItemSize(bb);
     if (!ImGui::ItemAdd(bb, bctx.bullet->pbid)) {
         return;
@@ -91,7 +91,10 @@ static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
     }
 
     // TODO button color
-    ImGui::RenderArrow(window->DrawList, bb.GetCenter(), 0x000000, bctx.bullet->expanded ? ImGuiDir_Down : ImGuiDir_Right);
+    // TODO highlight on hover
+    // TODO draw our own arrow -- ImGui::RenderArrow aligns with text, which we don't care about; we want to align with the bullet
+    ImGui::RenderArrow(window->DrawList, bb.Min - ImVec2(1, 1) /*hack, doesn't work when changing fonts*/, ImGui::GetColorU32(ImGuiCol_Text), bctx.bullet->expanded ? ImGuiDir_Down : ImGuiDir_Right);
+    // window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         bctx.bullet->expanded = !bctx.bullet->expanded;
@@ -111,13 +114,9 @@ static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
 
     // TODO better colors
     if (!bctx.bullet->expanded) {
-        window->DrawList->AddCircle(center, 8.0f, ImGui::GetColorU32(ImGuiCol_WindowBg));
+        window->DrawList->AddCircleFilled(center, 8.0f, ImGui::GetColorU32(ImGuiCol_TabActive));
     }
-    window->DrawList->AddCircle(center, 6.0f, ImGui::GetColorU32(ImGuiCol_Text));
-
-    // TODO switch to ImGui::PushID()?
-    char popupId[256];
-    snprintf(popupId, sizeof(popupId), "BulletCtxMenu%zu", bctx.bullet->pbid);
+    window->DrawList->AddCircleFilled(center, 3.5f, ImGui::GetColorU32(ImGuiCol_Text));
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         // TODO zoom in
@@ -125,10 +124,10 @@ static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
         ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
     {
-        ImGui::OpenPopup(popupId);
+        ImGui::OpenPopup(bctx.id);
     }
 
-    if (ImGui::BeginPopup(popupId)) {
+    if (ImGui::BeginPopupEx(bctx.id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
         // TODO implement key combos
         if (ImGui::MenuItem("Copy", "Ctrl+C")) {
             // TODO
@@ -175,7 +174,7 @@ static void ShowBulletContent(ShowContext& gctx, BulletContext& bctx) {
     ::VisitVariantOverloaded(
         bullet.content.v,
         [&](BulletContentTextual& bc) {
-            if (ImGui::InputText("BulletContent", &bc.text)) {
+            if (ImGui::InputText("##BulletContent", &bc.text)) {
                 bullet.document->UpdateBulletContent(bullet);
             }
         },
@@ -204,7 +203,7 @@ static void ShowBullet(ShowContext& gctx, BulletContext& bctx) {
 
     gctx.count += 1;
 
-    if (bctx.bullet->expanded) {
+    if (!bctx.bullet->expanded) {
         return;
     }
     bool withinDepthLimit = gctx.depth < kConfMaxFetchDepth;

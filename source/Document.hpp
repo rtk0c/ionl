@@ -57,6 +57,7 @@ struct Bullet {
     BulletContent content;
     std::vector<Pbid> children;
     bool expanded = true;
+    bool highlighted = false;
 
     bool IsRootBullet() const;
 };

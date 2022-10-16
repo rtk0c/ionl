@@ -4,7 +4,7 @@ date/3.0.1
 robin-hood-hashing/3.11.5
 glad/0.1.36
 glfw/3.3.7
-imgui/cci.20220621+1.88.docking
+freetype/2.12.1
 sqlite3/3.39.2
 
 [generators]

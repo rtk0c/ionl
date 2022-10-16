@@ -7,7 +7,9 @@ include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 conan_basic_setup()
 
 file(GLOB_RECURSE appInfiniteOutliner_SRC_FILES
+    source/*.h
     source/*.hpp
+    source/*.c
     source/*.cpp
 )
 add_executable(appInfiniteOutliner ${appInfiniteOutliner_SRC_FILES})

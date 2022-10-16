@@ -1,6 +1,6 @@
 #include "WidgetTextEdit.hpp"
 
-#include <imgui_internal.h>
+#include "imgui_internal.h"
 
 Ionl::TextEdit::TextEdit() = default;
 Ionl::TextEdit::~TextEdit() = default;

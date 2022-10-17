@@ -2084,6 +2084,23 @@ int ImTextStrFromUtf8(ImWchar* buf, int buf_size, const char* in_text, const cha
     return (int)(buf_out - buf);
 }
 
+int ImTextStrFromUtf8NoNullTerminate(ImWchar* buf, int buf_size, const char* in_text, const char* in_text_end, const char** in_text_remaining)
+{
+    ImWchar* buf_out = buf;
+    ImWchar* buf_end = buf + buf_size;
+    while (buf_out < buf_end && (!in_text_end || in_text < in_text_end) && *in_text)
+    {
+        unsigned int c;
+        in_text += ImTextCharFromUtf8(&c, in_text, in_text_end);
+        if (c == 0)
+            break;
+        *buf_out++ = (ImWchar)c;
+    }
+    if (in_text_remaining)
+        *in_text_remaining = in_text;
+    return (int)(buf_out - buf);
+}
+
 int ImTextCountCharsFromUtf8(const char* in_text, const char* in_text_end)
 {
     int char_count = 0;

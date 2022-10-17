@@ -47,29 +47,36 @@ struct TextStyles {
 };
 extern TextStyles gTextStyles;
 
+struct TextBuffer {
+    ImWchar* buffer;
+    size_t bufferSize;
+    size_t frontSize;
+    size_t gapSize;
+
+    TextBuffer();
+    TextBuffer(std::string_view content);
+    ~TextBuffer();
+
+    std::string ExtractContent() const;
+    void UpdateContent(std::string_view content);
+};
+
 /// - Spans from cursor X pos, all the way to the right at max content width
 /// - Height depends on the text inside
 struct TextEdit {
-    ImGuiID id;
-    float linePadding = 6.0f;
+    /* [In] */ ImGuiID id;
+    /* [In] */ TextBuffer* buffer;
+    /* [In] */ float linePadding = 0.0f;
 
-    // Internal state, use with care
-    struct Line {
-        // Data
-        // TODO gap buffer?
-        ImVector<ImWchar> buffer;
-    };
-
-    std::vector<Line> lines;
-
-    // Ctor/dtor does nothing special except default initializes (as in sane default values, not the C++ standard kind) fields
-    TextEdit(ImGuiID id);
-    TextEdit(const char* id);
-    ~TextEdit();
+    struct Cursor {
+        // NOTE: should always satisfy `idx == buffer->frontSize`
+        size_t idx;
+        // false: the cursor is before the wrap (prev line), or that no soft wrap is applied
+        // true: the cursor is after the wrap (next line)
+        bool affinity;
+    } _cursor;
 
     void Show();
-
-    void SetContent(std::string_view text);
 };
 
 } // namespace Ionl

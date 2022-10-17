@@ -332,7 +332,14 @@ static void ShowAppViews(AppState& as) {
     }
 
     ImGui::Begin("TextEdit test");
-    static TextEdit textEdit("test");
+    using namespace std::string_view_literals;
+    static TextBuffer buffer("# Heading 1\n## Heading 2\nTest **bold** _italics_ __underline__ ~~strikethrough~~\n`monospace`\n**`formatted`_`monospace`_**\n`hello`__`more`~~`more`~~__\n"sv);
+    static TextEdit textEdit = []() {
+        TextEdit res;
+        res.id = ImGui::GetID("test");
+        res.buffer = &buffer;
+        return res;
+    }();
     textEdit.Show();
     ImGui::End();
 }
@@ -429,7 +436,7 @@ int main() {
         auto ufopsCntBeforeFrame = as.storeFacade.GetUnflushedOpsCount();
 
         ShowAppViews(as);
-
+        ImGui::ShowDemoWindow();
         auto ufopsCntAfterFrame = as.storeFacade.GetUnflushedOpsCount();
 
         ImGui::Render();

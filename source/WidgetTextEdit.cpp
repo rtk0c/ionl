@@ -21,50 +21,50 @@ Ionl::TextEdit::TextEdit(const char* id)
 Ionl::TextEdit::~TextEdit() = default;
 
 namespace {
-struct VariantProperties {
+struct FaceTrait {
     const ImWchar* loc = nullptr;
     ImVec2 pos;
     bool state = false;
 };
 
-struct FontProperties {
-    VariantProperties bold;
-    VariantProperties italic;
-    VariantProperties underline;
-    VariantProperties strikethrough;
-    VariantProperties monospace;
+struct FaceDescription {
+    FaceTrait bold;
+    FaceTrait italic;
+    FaceTrait underline;
+    FaceTrait strikethrough;
+    FaceTrait monospace;
 };
 
-void LocateFont(const FontProperties& props, ImFont*& outFont, ImU32& outColor) {
+void LocateFace(const FaceDescription& desc, ImFont*& outFont, ImU32& outColor) {
     using namespace Ionl;
 
-    if (props.monospace.state) {
-        if (props.bold.state && props.italic.state) {
-            outFont = gTextStyles.fonts[MFV_MonospaceBoldItalic];
-            outColor = gTextStyles.fontColors[MFV_MonospaceBoldItalic];
-        } else if (props.bold.state) {
-            outFont = gTextStyles.fonts[MFV_MonospaceBold];
-            outColor = gTextStyles.fontColors[MFV_MonospaceBold];
-        } else if (props.italic.state) {
-            outFont = gTextStyles.fonts[MFV_MonospaceItalic];
-            outColor = gTextStyles.fontColors[MFV_MonospaceItalic];
+    if (desc.monospace.state) {
+        if (desc.bold.state && desc.italic.state) {
+            outFont = gTextStyles.faceFonts[MF_MonospaceBoldItalic];
+            outColor = gTextStyles.faceColors[MF_MonospaceBoldItalic];
+        } else if (desc.bold.state) {
+            outFont = gTextStyles.faceFonts[MF_MonospaceBold];
+            outColor = gTextStyles.faceColors[MF_MonospaceBold];
+        } else if (desc.italic.state) {
+            outFont = gTextStyles.faceFonts[MF_MonospaceItalic];
+            outColor = gTextStyles.faceColors[MF_MonospaceItalic];
         } else {
-            outFont = gTextStyles.fonts[MFV_Monospace];
-            outColor = gTextStyles.fontColors[MFV_Monospace];
+            outFont = gTextStyles.faceFonts[MF_Monospace];
+            outColor = gTextStyles.faceColors[MF_Monospace];
         }
     } else {
-        if (props.bold.state && props.italic.state) {
-            outFont = gTextStyles.fonts[MFV_ProportionalBoldItalic];
-            outColor = gTextStyles.fontColors[MFV_ProportionalBoldItalic];
-        } else if (props.bold.state) {
-            outFont = gTextStyles.fonts[MFV_ProportionalBold];
-            outColor = gTextStyles.fontColors[MFV_ProportionalBold];
-        } else if (props.italic.state) {
-            outFont = gTextStyles.fonts[MFV_ProportionalItalic];
-            outColor = gTextStyles.fontColors[MFV_ProportionalItalic];
+        if (desc.bold.state && desc.italic.state) {
+            outFont = gTextStyles.faceFonts[MF_ProportionalBoldItalic];
+            outColor = gTextStyles.faceColors[MF_ProportionalBoldItalic];
+        } else if (desc.bold.state) {
+            outFont = gTextStyles.faceFonts[MF_ProportionalBold];
+            outColor = gTextStyles.faceColors[MF_ProportionalBold];
+        } else if (desc.italic.state) {
+            outFont = gTextStyles.faceFonts[MF_ProportionalItalic];
+            outColor = gTextStyles.faceColors[MF_ProportionalItalic];
         } else {
-            outFont = gTextStyles.fonts[MFV_Proportional];
-            outColor = gTextStyles.fontColors[MFV_Proportional];
+            outFont = gTextStyles.faceFonts[MF_Proportional];
+            outColor = gTextStyles.faceColors[MF_Proportional];
         }
     }
 };
@@ -79,10 +79,10 @@ void Ionl::TextEdit::Show() {
     ImDrawList* drawList = window->DrawList;
 
     bool escaping = false;
-    FontProperties format;
-    ImFont* formatFont;
-    ImU32 formatColor;
-    LocateFont(format, formatFont, formatColor);
+    FaceDescription faceDesc;
+    ImFont* faceFont;
+    ImU32 faceColor;
+    LocateFace(faceDesc, faceFont, faceColor);
 
     ImVec2 textPos = window->DC.CursorPos;
     float totalHeight = 0.0f;
@@ -117,11 +117,11 @@ void Ionl::TextEdit::Show() {
                 cursor += 1;
                 headingLevel += 1;
             }
-            headingLevel = ImMin<int>(headingLevel, MFV_META_HeadingMax);
+            headingLevel = ImMin<int>(headingLevel, MF_META_HeadingMax);
 
             // Do the all of the text rendering here (heading style overrides everything else)
-            auto font = gTextStyles.fonts[MFV_Heading1 + headingLevel];
-            auto color = gTextStyles.fontColors[MFV_Heading1 + headingLevel];
+            auto font = gTextStyles.faceFonts[MF_Heading1 + headingLevel];
+            auto color = gTextStyles.faceColors[MF_Heading1 + headingLevel];
             drawList->AddText(font, font->FontSize, textPos, color, line.buffer.begin(), line.buffer.end());
 
             float dy = font->FontSize + linePadding;
@@ -149,7 +149,7 @@ void Ionl::TextEdit::Show() {
 
             // Returns true if a formatting operator is consumed (may not be effective, i.e. escaped)
             // Returns false if nothing is consumed
-            auto chConsume = [&](std::string_view pattern, VariantProperties& props) {
+            auto chConsume = [&](std::string_view pattern, FaceTrait& props) {
                 if (!chMatches(pattern)) return false;
 
                 // Treat as normal text
@@ -171,7 +171,7 @@ void Ionl::TextEdit::Show() {
                     props.state = true;
                     props.loc = cursor;
                     props.pos = textPos;
-                    LocateFont(format, formatFont, formatColor);
+                    LocateFace(faceDesc, faceFont, faceColor);
                 }
 
                 cursor += pattern.size();
@@ -181,40 +181,40 @@ void Ionl::TextEdit::Show() {
             do {
                 // Inline code
                 // TOOD implement consecutive code collapsing
-                if (chConsume("`"sv, format.monospace)) break;
-                if (!format.monospace.state) {
+                if (chConsume("`"sv, faceDesc.monospace)) break;
+                if (!faceDesc.monospace.state) {
                     // Bold
-                    if (chConsume("**"sv, format.bold)) break;
+                    if (chConsume("**"sv, faceDesc.bold)) break;
 
                     // Underline
-                    if (auto pos = format.underline.pos;
-                        chConsume("__"sv, format.underline))
+                    if (auto pos = faceDesc.underline.pos;
+                        chConsume("__"sv, faceDesc.underline))
                     {
                         // Closing specifier
-                        if (!format.underline.state) {
+                        if (!faceDesc.underline.state) {
                             delayedLineStartPos = pos;
-                            delayedLineColor = formatColor;
-                            delayedLineYOffset = formatFont->FontSize;
+                            delayedLineColor = faceColor;
+                            delayedLineYOffset = faceFont->FontSize;
                         }
                         break;
                     }
 
                     // Strikethrough
-                    if (auto pos = format.strikethrough.pos;
-                        chConsume("~~"sv, format.strikethrough))
+                    if (auto pos = faceDesc.strikethrough.pos;
+                        chConsume("~~"sv, faceDesc.strikethrough))
                     {
                         // Closing specifier
-                        if (!format.strikethrough.state) {
+                        if (!faceDesc.strikethrough.state) {
                             delayedLineStartPos = pos;
-                            delayedLineColor = formatColor;
-                            delayedLineYOffset = formatFont->FontSize / 2;
+                            delayedLineColor = faceColor;
+                            delayedLineYOffset = faceFont->FontSize / 2;
                         }
                         break;
                     }
 
                     // Iatlic
-                    if (chConsume("*"sv, format.italic) ||
-                        chConsume("_"sv, format.italic))
+                    if (chConsume("*"sv, faceDesc.italic) ||
+                        chConsume("_"sv, faceDesc.italic))
                     {
                         break;
                     }
@@ -235,7 +235,7 @@ void Ionl::TextEdit::Show() {
 
             // Draw the current segment of text, [oldCursor, cursor)
             for (auto ch = oldCursor; ch != cursor; ++ch) {
-                auto glyph = formatFont->FindGlyph(*ch);
+                auto glyph = faceFont->FindGlyph(*ch);
                 if (!glyph) continue;
                 if (!glyph->Visible) continue;
 
@@ -245,7 +245,7 @@ void Ionl::TextEdit::Show() {
                 ImVec2 uv0(glyph->U0, glyph->V0);
                 ImVec2 uv1(glyph->U1, glyph->V1);
 
-                ImU32 glyphColor = glyph->Colored ? (formatColor | ~IM_COL32_A_MASK) : formatColor;
+                ImU32 glyphColor = glyph->Colored ? (faceColor | ~IM_COL32_A_MASK) : faceColor;
                 drawList->PrimRectUV(pos0, pos1, uv0, uv1, glyphColor);
 #ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
                 drawList->AddRect(pos0, pos1, IM_COL32(0, 255, 255, 255));
@@ -255,7 +255,7 @@ void Ionl::TextEdit::Show() {
             }
 
             if (delayedUpdateFormat) {
-                LocateFont(format, formatFont, formatColor);
+                LocateFace(faceDesc, faceFont, faceColor);
             }
             if (delayedLineStartPos.x != 0.0f) {
                 drawList->AddLine(

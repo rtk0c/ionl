@@ -385,34 +385,34 @@ int main() {
 
     // TODO proper discovery code
     float fontSize = 18.0f;
-    gTextStyles.fonts[MFV_Proportional] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.fonts[MFV_ProportionalItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Italic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.fonts[MFV_ProportionalBold] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.fonts[MFV_ProportionalBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.fonts[MFV_Monospace] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.fonts[MFV_MonospaceItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Italic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.fonts[MFV_MonospaceBold] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Bold.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.fonts[MFV_MonospaceBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.faceFonts[MF_Proportional] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.faceFonts[MF_ProportionalItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Italic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.faceFonts[MF_ProportionalBold] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.faceFonts[MF_ProportionalBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.faceFonts[MF_Monospace] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.faceFonts[MF_MonospaceItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Italic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.faceFonts[MF_MonospaceBold] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Bold.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.faceFonts[MF_MonospaceBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
     gTextStyles.regularFontSize = fontSize;
 
-    gTextStyles.fontColors[MFV_Proportional] = IM_COL32(255, 255, 255, 255);
-    gTextStyles.fontColors[MFV_ProportionalItalic] = IM_COL32(255, 255, 255, 255);
-    gTextStyles.fontColors[MFV_ProportionalBold] = IM_COL32(255, 255, 255, 255);
-    gTextStyles.fontColors[MFV_ProportionalBoldItalic] = IM_COL32(255, 255, 255, 255);
-    gTextStyles.fontColors[MFV_Monospace] = IM_COL32(176, 215, 221, 255);
-    gTextStyles.fontColors[MFV_MonospaceItalic] = IM_COL32(176, 215, 221, 255);
-    gTextStyles.fontColors[MFV_MonospaceBold] = IM_COL32(176, 215, 221, 255);
-    gTextStyles.fontColors[MFV_MonospaceBoldItalic] = IM_COL32(176, 215, 221, 255);
+    gTextStyles.faceColors[MF_Proportional] = IM_COL32(255, 255, 255, 255);
+    gTextStyles.faceColors[MF_ProportionalItalic] = IM_COL32(255, 255, 255, 255);
+    gTextStyles.faceColors[MF_ProportionalBold] = IM_COL32(255, 255, 255, 255);
+    gTextStyles.faceColors[MF_ProportionalBoldItalic] = IM_COL32(255, 255, 255, 255);
+    gTextStyles.faceColors[MF_Monospace] = IM_COL32(176, 215, 221, 255);
+    gTextStyles.faceColors[MF_MonospaceItalic] = IM_COL32(176, 215, 221, 255);
+    gTextStyles.faceColors[MF_MonospaceBold] = IM_COL32(176, 215, 221, 255);
+    gTextStyles.faceColors[MF_MonospaceBoldItalic] = IM_COL32(176, 215, 221, 255);
 
-    auto InitHeadingFont = [&](MarkdownFaceVariant variant, float scale) {
-        gTextStyles.fonts[variant] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
-        gTextStyles.fontColors[variant] = gTextStyles.fontColors[MFV_Proportional];
+    auto InitHeadingFont = [&](MarkdownFace variant, float scale) {
+        gTextStyles.faceFonts[variant] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
+        gTextStyles.faceColors[variant] = gTextStyles.faceColors[MF_Proportional];
     };
-    InitHeadingFont(MFV_Heading1, 2.5f);
-    InitHeadingFont(MFV_Heading2, 2.0f);
-    InitHeadingFont(MFV_Heading3, 1.5f);
-    InitHeadingFont(MFV_Heading4, 1.2f);
-    InitHeadingFont(MFV_Heading5, 1.0f);
+    InitHeadingFont(MF_Heading1, 2.5f);
+    InitHeadingFont(MF_Heading2, 2.0f);
+    InitHeadingFont(MF_Heading3, 1.5f);
+    InitHeadingFont(MF_Heading4, 1.2f);
+    InitHeadingFont(MF_Heading5, 1.0f);
 
     AppState as;
     double lastWriteTime = 0.0;

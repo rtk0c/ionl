@@ -15,47 +15,36 @@ namespace Ionl {
 // TODO DPI handling?
 // TODO figure out font caching or SDF based rendering: generating a separate atlas for each heading type is really costly on VRAM
 
-// Terminology:
-// - "face": a font face, i.e ImFontAtlas
-// - "text style": how a string should be rendered, described using bold/italics/etc. + size + color
-//                 each text style can be translated into a face
-
-// Goals:
-// - Inline markup previewing (e.g. rendering **bold** text as bold)
-// - UTF-8 support just like the builtin ImGui::InputText
-// Non-goals:
-// - Full unicode support such as RTL
-
 /// Represents a (potential) font variant to be used.
 /// Each element except 'regular' may be missing, and should fallback to the regular style.
-enum MarkdownFaceVariant {
+enum MarkdownFace {
     // NOTE: these must all have the same FontSize
     // NOTE: no underline and strikethrough fonts, we just draw our own decorations for those
-    MFV_Proportional,
-    MFV_ProportionalItalic,
-    MFV_ProportionalBold,
-    MFV_ProportionalBoldItalic,
-    MFV_Monospace,
-    MFV_MonospaceItalic,
-    MFV_MonospaceBold,
-    MFV_MonospaceBoldItalic,
+    MF_Proportional,
+    MF_ProportionalItalic,
+    MF_ProportionalBold,
+    MF_ProportionalBoldItalic,
+    MF_Monospace,
+    MF_MonospaceItalic,
+    MF_MonospaceBold,
+    MF_MonospaceBoldItalic,
 
-    MFV_Heading1,
-    MFV_Heading2,
-    MFV_Heading3,
-    MFV_Heading4,
-    MFV_Heading5,
-    MFV_META_HeadingMax = MFV_Heading5,
+    MF_Heading1,
+    MF_Heading2,
+    MF_Heading3,
+    MF_Heading4,
+    MF_Heading5,
+    MF_META_HeadingMax = MF_Heading5,
 
-    MFV_COUNT,
+    MF_COUNT,
 };
 
 struct TextStyles {
-    ImFont* fonts[MFV_COUNT];
-    ImU32 fontColors[MFV_COUNT];
-    float regularFontSize /* = fonts[MFV_Proportional]->FontSize */;
+    ImFont* faceFonts[MF_COUNT];
+    ImU32 faceColors[MF_COUNT];
+    // Must be set by the user to...
+    float regularFontSize /* = fonts[MF_Proportional]->FontSize */;
 };
-
 extern TextStyles gTextStyles;
 
 /// - Spans from cursor X pos, all the way to the right at max content width

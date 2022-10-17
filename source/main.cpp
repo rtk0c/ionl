@@ -78,7 +78,8 @@ enum class BulletAction {
 static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
     auto window = ImGui::GetCurrentWindow();
 
-    ImRect bb{ window->DC.CursorPos + ImVec2(5, 5), window->DC.CursorPos + ImVec2(15, 15) };
+    float fontSize = ImGui::GetCurrentContext()->FontSize;
+    ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + ImVec2(fontSize * 0.8f, fontSize) };
     ImGui::ItemSize(bb);
     if (!ImGui::ItemAdd(bb, bctx.bullet->pbid)) {
         return;
@@ -91,9 +92,25 @@ static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
 
     // TODO button color
     // TODO highlight on hover
-    // TODO draw our own arrow -- ImGui::RenderArrow aligns with text, which we don't care about; we want to align with the bullet
-    ImGui::RenderArrow(window->DrawList, bb.Min - ImVec2(1, 1) /*hack, doesn't work when changing fonts*/, ImGui::GetColorU32(ImGuiCol_Text), bctx.bullet->expanded ? ImGuiDir_Down : ImGuiDir_Right);
-    // window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
+
+    ImVec2 center = bb.GetCenter();
+    ImVec2 a, b, c;
+    float r = fontSize * 0.3f;
+    if (bctx.bullet->expanded) {
+        // Down
+        a = ImVec2(+0.000f, +0.750f) * r;
+        b = ImVec2(-0.866f, -0.750f) * r;
+        c = ImVec2(+0.866f, -0.750f) * r;
+    } else {
+        // Right
+        a = ImVec2(+0.750f, +0.000f) * r;
+        b = ImVec2(-0.750f, +0.866f) * r;
+        c = ImVec2(-0.750f, -0.866f) * r;
+    }
+    window->DrawList->AddTriangleFilled(center + a, center + b, center + c, ImGui::GetColorU32(ImGuiCol_Text));
+#ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
+    window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
+#endif
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         bctx.bullet->expanded = !bctx.bullet->expanded;
@@ -103,7 +120,8 @@ static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
 static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
     auto window = ImGui::GetCurrentWindow();
 
-    ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + ImVec2(20, 20) };
+    float fontSize = ImGui::GetCurrentContext()->FontSize;
+    ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + ImVec2(fontSize * 0.8f, fontSize) };
     ImGui::ItemSize(bb);
     if (!ImGui::ItemAdd(bb, bctx.bullet->pbid)) {
         return;
@@ -113,9 +131,12 @@ static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
 
     // TODO better colors
     if (!bctx.bullet->expanded) {
-        window->DrawList->AddCircleFilled(center, 8.0f, ImGui::GetColorU32(ImGuiCol_TabActive));
+        window->DrawList->AddCircleFilled(center, fontSize * 0.35f, ImGui::GetColorU32(ImGuiCol_TabActive));
     }
-    window->DrawList->AddCircleFilled(center, 3.5f, ImGui::GetColorU32(ImGuiCol_Text));
+    window->DrawList->AddCircleFilled(center, fontSize * 0.2f, ImGui::GetColorU32(ImGuiCol_Text));
+#ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
+    window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
+#endif
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         // TODO zoom in
@@ -193,9 +214,14 @@ static void ShowBullet(ShowContext& gctx, BulletContext& bctx) {
     if (gctx.rootBullet == bctx.bullet) {
         // TODO show "title"
     } else {
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+
         ShowBulletCollapseFlag(gctx, bctx);
         ImGui::SameLine();
         ShowBulletIcon(gctx, bctx);
+
+        ImGui::PopStyleVar();
+
         ImGui::SameLine();
         ShowBulletContent(gctx, bctx);
     }

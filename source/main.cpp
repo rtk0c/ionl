@@ -395,10 +395,18 @@ int main() {
     gTextStyles.fonts[MFV_MonospaceBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
     gTextStyles.regularFontSize = fontSize;
 
-    std::fill(std::begin(gTextStyles.fontColors), std::end(gTextStyles.fontColors), 0xffffffff);
+    gTextStyles.fontColors[MFV_Proportional] = IM_COL32(255, 255, 255, 255);
+    gTextStyles.fontColors[MFV_ProportionalItalic] = IM_COL32(255, 255, 255, 255);
+    gTextStyles.fontColors[MFV_ProportionalBold] = IM_COL32(255, 255, 255, 255);
+    gTextStyles.fontColors[MFV_ProportionalBoldItalic] = IM_COL32(255, 255, 255, 255);
+    gTextStyles.fontColors[MFV_Monospace] = IM_COL32(176, 215, 221, 255);
+    gTextStyles.fontColors[MFV_MonospaceItalic] = IM_COL32(176, 215, 221, 255);
+    gTextStyles.fontColors[MFV_MonospaceBold] = IM_COL32(176, 215, 221, 255);
+    gTextStyles.fontColors[MFV_MonospaceBoldItalic] = IM_COL32(176, 215, 221, 255);
 
     auto InitHeadingFont = [&](MarkdownFaceVariant variant, float scale) {
         gTextStyles.fonts[variant] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
+        gTextStyles.fontColors[variant] = gTextStyles.fontColors[MFV_Proportional];
     };
     InitHeadingFont(MFV_Heading1, 2.5f);
     InitHeadingFont(MFV_Heading2, 2.0f);

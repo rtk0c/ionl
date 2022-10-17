@@ -165,22 +165,6 @@ void Ionl::TextEdit::Show() {
                 ++haystack;
             }
         };
-        auto chConsume = [&](std::string_view pattern) {
-            if (chMatches(pattern)) {
-                cursor += pattern.size();
-
-                if (!escaping) {
-                    formatOpStack.push_back({
-                        .op = pattern,
-                        .location = cursor,
-                    });
-                    return true;
-                }
-
-                escaping = false;
-            }
-            return false;
-        };
 
         // Heading parsing
         if (*cursor == '#') {
@@ -203,6 +187,12 @@ void Ionl::TextEdit::Show() {
             continue;
         }
 
+        // Code block parsing
+        if (chMatches("```")) {
+            // TODO
+            continue;
+        }
+
         int vtxCount = line.buffer.size() * 4;
         int idxCount = line.buffer.size() * 6;
         drawList->PrimReserve(idxCount, vtxCount);
@@ -215,58 +205,66 @@ void Ionl::TextEdit::Show() {
             }
 
             bool delayedUpdateFormat = false;
-            if (chConsume("**"sv)) {
-                // Bold
-                if (format.bold) {
-                    format.bold = false;
-                    delayedUpdateFormat = true;
-                } else {
-                    format.bold = true;
-                    LocateFont(format, formatFont, formatColor);
+            // Returns true if a formatting operator is consumed (may not be effective, i.e. escaped)
+            // Returns false if nothing is consumed
+            auto chConsume = [&](std::string_view pattern, bool& state) {
+                if (!chMatches(pattern)) return false;
+
+                cursor += pattern.size();
+
+                // Treat as normal text
+                if (escaping) {
+                    escaping = false;
+                    return false;
                 }
-            } else if (chConsume("__"sv)) {
-                // Underline
-                if (format.underline) {
-                    format.underline = false;
-                    delayedUpdateFormat = true;
+
+                if (state) {
+                    IM_ASSERT(!formatOpStack.empty());
+                    auto& lastOp = formatOpStack.back();
+                    if (lastOp.op == pattern) {
+                        // There is a matching opening specifier in the stack, correct syntax
+                        formatOpStack.pop_back();
+                        state = false;
+                        delayedUpdateFormat = true;
+                        return true;
+                    } else {
+                        // Treat as normal text
+                        // Remove the now dangling opening specifier
+                        return false;
+                    }
                 } else {
-                    format.underline = true;
+                    formatOpStack.push_back({
+                        .op = pattern,
+                        .location = cursor,
+                    });
+                    state = true;
                     LocateFont(format, formatFont, formatColor);
+                    return true;
                 }
-            } else if (chConsume("~~"sv)) {
-                // Strikethrough
-                if (format.strikethrough) {
-                    format.strikethrough = false;
-                    delayedUpdateFormat = true;
-                } else {
-                    format.strikethrough = true;
-                    LocateFont(format, formatFont, formatColor);
-                }
-            } else if (chConsume("*"sv) || chConsume("_"sv)) {
-                // Iatlic
-                if (format.italic) {
-                    format.italic = false;
-                    delayedUpdateFormat = true;
-                } else {
-                    format.italic = true;
-                    LocateFont(format, formatFont, formatColor);
-                }
-            } else if (chConsume("`"sv)) {
+            };
+
+            do {
                 // Inline code
                 // TOOD implement consecutive code collapsing
-                if (format.monospace) {
-                    format.monospace = false;
-                    delayedUpdateFormat = true;
-                } else {
-                    format.monospace = true;
-                    LocateFont(format, formatFont, formatColor);
+                if (chConsume("`"sv, format.monospace)) break;
+                if (!format.monospace) {
+                    // Bold
+                    if (chConsume("**"sv, format.bold)) break;
+                    // Underline
+                    if (chConsume("__"sv, format.underline)) break;
+                    // Strikethrough
+                    if (chConsume("~~"sv, format.strikethrough)) break;
+                    // Iatlic
+                    if (chConsume("*"sv, format.italic)) break;
+                    if (chConsume("_"sv, format.italic)) break;
                 }
-            } else /* Regular character */ {
+
+                // Regular text
                 // After all checks, if the previous '\' turns out to be escaping nothing, simply ignore it
                 escaping = false;
 
                 cursor += 1;
-            }
+            } while (false);
 
             // Draw the current segment of text, [oldCursor, cursor)
             for (auto ch = oldCursor; ch != cursor; ++ch) {
@@ -275,18 +273,17 @@ void Ionl::TextEdit::Show() {
                 if (!glyph->Visible) continue;
 
                 // We don't do a second finer clipping test on the Y axis as we've already skipped anything before clip_rect.y and exit once we pass clip_rect.w
-                float x1 = textPos.x + glyph->X0;
-                float x2 = textPos.x + glyph->X1;
-                float y1 = textPos.y + glyph->Y0;
-                float y2 = textPos.y + glyph->Y1;
+                ImVec2 pos0(textPos.x + glyph->X0, textPos.y + glyph->Y0);
+                ImVec2 pos1(textPos.x + glyph->X1, textPos.y + glyph->Y1);
 
-                float u1 = glyph->U0;
-                float v1 = glyph->V0;
-                float u2 = glyph->U1;
-                float v2 = glyph->V1;
+                ImVec2 uv0(glyph->U0, glyph->V0);
+                ImVec2 uv1(glyph->U1, glyph->V1);
 
                 ImU32 glyphColor = glyph->Colored ? (formatColor | ~IM_COL32_A_MASK) : formatColor;
-                drawList->PrimRectUV(ImVec2(x1, y1), ImVec2(x2, y2), ImVec2(u1, v1), ImVec2(u2, v2), glyphColor);
+                drawList->PrimRectUV(pos0, pos1, uv0, uv1, glyphColor);
+#ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
+                drawList->AddRect(pos0, pos1, IM_COL32(0, 255, 255, 255));
+#endif
 
                 textPos.x += glyph->AdvanceX;
             }
@@ -308,6 +305,10 @@ void Ionl::TextEdit::Show() {
     if (!ImGui::ItemAdd(bb, id)) {
         return;
     }
+
+#ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
+    drawList->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
+#endif
 }
 
 void Ionl::TextEdit::SetContent(std::string_view text) {

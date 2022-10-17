@@ -304,6 +304,8 @@ static const std::string& ResolveContentToText(Ionl::Document& document, const I
     }
 }
 
+#include "WidgetTextEdit.hpp"
+
 static void ShowAppViews(AppState& as) {
     for (size_t i = 0; i < as.views.size(); ++i) {
         auto& dv = as.views[i];
@@ -328,6 +330,11 @@ static void ShowAppViews(AppState& as) {
         dv.view.Show();
         ImGui::End();
     }
+
+    ImGui::Begin("TextEdit test");
+    static TextEdit textEdit("test");
+    textEdit.Show();
+    ImGui::End();
 }
 
 int main() {
@@ -370,10 +377,34 @@ int main() {
     }
 
     IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    auto& ctx = *ImGui::CreateContext();
+    auto& io = ImGui::GetIO();
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+
+    // TODO proper discovery code
+    float fontSize = 18.0f;
+    gTextStyles.fonts[MFV_Proportional] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.fonts[MFV_ProportionalItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Italic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.fonts[MFV_ProportionalBold] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.fonts[MFV_ProportionalBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.fonts[MFV_Monospace] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.fonts[MFV_MonospaceItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Italic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.fonts[MFV_MonospaceBold] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Bold.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.fonts[MFV_MonospaceBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
+    gTextStyles.regularFontSize = fontSize;
+
+    std::fill(std::begin(gTextStyles.fontColors), std::end(gTextStyles.fontColors), 0xffffffff);
+
+    auto InitHeadingFont = [&](MarkdownFaceVariant variant, float scale) {
+        gTextStyles.fonts[variant] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
+    };
+    InitHeadingFont(MFV_Heading1, 2.5f);
+    InitHeadingFont(MFV_Heading2, 2.0f);
+    InitHeadingFont(MFV_Heading3, 1.5f);
+    InitHeadingFont(MFV_Heading4, 1.2f);
+    InitHeadingFont(MFV_Heading5, 1.0f);
 
     AppState as;
     double lastWriteTime = 0.0;

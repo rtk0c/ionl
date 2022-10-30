@@ -3292,6 +3292,127 @@ IMGUI_API void      ImFontAtlasBuildMultiplyCalcLookupTable(unsigned char out_ta
 IMGUI_API void      ImFontAtlasBuildMultiplyRectAlpha8(const unsigned char table[256], unsigned char* pixels, int x, int y, int w, int h, int stride);
 
 //-----------------------------------------------------------------------------
+// [SECTION] ImFont internal API
+//-----------------------------------------------------------------------------
+
+// Simple word-wrapping for English, not full-featured. Please submit failing cases!
+// This will return the next location to wrap from. If no wrapping if necessary, this will fast-forward to e.g. text_end.
+// FIXME: Much possible improvements (don't cut things like "word !", "word!!!" but cut within "word,,,,", more sensible support for punctuations, support for Unicode punctuations, etc.)
+template <typename TIter, typename TEnd>
+TIter ImCalcWordWrapPosition(const ImFont* font, float scale, TIter text, TEnd text_end, float wrap_width)
+{
+    // For references, possible wrap point marked with ^
+    //  "aaa bbb, ccc,ddd. eee   fff. ggg!"
+    //      ^    ^    ^   ^   ^__    ^    ^
+
+    // List of hardcoded separators: .,;!?'"
+
+    // Skip extra blanks after a line returns (that includes not counting them in width computation)
+    // e.g. "Hello    world" --> "Hello" "World"
+
+    // Cut words that cannot possibly fit within one line.
+    // e.g.: "The tropical fish" with ~5 characters worth of width --> "The tr" "opical" "fish"
+    float line_width = 0.0f;
+    float word_width = 0.0f;
+    float blank_width = 0.0f;
+    wrap_width /= scale; // We work with unscaled widths to avoid scaling every characters
+
+    TIter word_end = text;
+    TIter prev_word_end = text_end;
+    bool inside_word = true;
+
+    TIter s = text;
+    while (s < text_end)
+    {
+        unsigned int c = (unsigned int)*s;
+        TIter next_s = text_end;
+        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(*text)>, char>)
+        {
+            if (c < 0x80)
+            {
+                next_s = s + 1;
+            }
+            else
+            {
+                next_s = s + ImTextCharFromUtf8(&c, s, text_end);
+                if (c == 0)
+                    break;
+            }
+        }
+        else
+        {
+            next_s = s + 1;
+        }
+
+        if (c < 32)
+        {
+            if (c == '\n')
+            {
+                line_width = word_width = blank_width = 0.0f;
+                inside_word = true;
+                s = next_s;
+                continue;
+            }
+            if (c == '\r')
+            {
+                s = next_s;
+                continue;
+            }
+        }
+
+        const float char_width = ((int)c < font->IndexAdvanceX.Size ? font->IndexAdvanceX.Data[c] : font->FallbackAdvanceX);
+        if (ImCharIsBlankW(c))
+        {
+            if (inside_word)
+            {
+                line_width += blank_width;
+                blank_width = 0.0f;
+                word_end = s;
+            }
+            blank_width += char_width;
+            inside_word = false;
+        }
+        else
+        {
+            word_width += char_width;
+            if (inside_word)
+            {
+                word_end = next_s;
+            }
+            else
+            {
+                prev_word_end = word_end;
+                line_width += word_width + blank_width;
+                word_width = blank_width = 0.0f;
+            }
+
+            // Allow wrapping after punctuation.
+            inside_word = (c != '.' && c != ',' && c != ';' && c != '!' && c != '?' && c != '\"');
+        }
+
+        // We ignore blank width at the end of the line (they can be skipped)
+        if (line_width + word_width > wrap_width)
+        {
+            // Words that cannot possibly fit within an entire line will be cut anywhere.
+            if (word_width < wrap_width)
+            {
+                bool prev_word_end_valid = prev_word_end != text_end;
+                s = prev_word_end_valid ? prev_word_end : word_end;
+            }
+            break;
+        }
+
+        s = next_s;
+    }
+
+    // Wrap_width is too small to fit anything. Force displaying 1 character to minimize the height discontinuity.
+    // +1 may not be a character start point in UTF-8 but it's ok because caller loops use (text >= word_wrap_eol).
+    if (s == text && text < text_end)
+        return s + 1;
+    return s;
+}
+
+//-----------------------------------------------------------------------------
 // [SECTION] Test Engine specific hooks (imgui_test_engine)
 //-----------------------------------------------------------------------------
 

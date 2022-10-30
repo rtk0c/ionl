@@ -903,6 +903,8 @@ namespace ImGui
 
     // Text Utilities
     IMGUI_API ImVec2        CalcTextSize(const char* text, const char* text_end = NULL, bool hide_text_after_double_hash = false, float wrap_width = -1.0f);
+    IMGUI_API const char*   CalcWordWrapNextLineStart(const char* text, const char* text_end);
+    IMGUI_API const ImWchar* CalcWordWrapNextLineStart(const ImWchar* text, const ImWchar* text_end);
 
     // Color Utilities
     IMGUI_API ImVec4        ColorConvertU32ToFloat4(ImU32 in);

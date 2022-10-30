@@ -80,6 +80,14 @@ struct GapBufferIterator {
         : obj{ &buffer }
         , ptr{ buffer.buffer } {}
 
+    void SetBegin() {
+        ptr = obj->buffer;
+    }
+
+    void SetEnd() {
+        ptr = obj->buffer + obj->bufferSize;
+    }
+
     ImWchar& operator*() {
         return *ptr;
     }
@@ -90,6 +98,19 @@ struct GapBufferIterator {
             ptr += obj->gapSize;
         }
         return *this;
+    }
+
+    GapBufferIterator operator+(int n) const {
+        ImWchar* backBegin = obj->buffer + obj->frontSize;
+        ptrdiff_t dist = backBegin - ptr;
+        GapBufferIterator it;
+        it.obj = obj;
+        if (dist <= n) {
+            it.ptr = backBegin + (n - dist);
+        } else {
+            it.ptr = ptr + n;
+        }
+        return it;
     }
 
     GapBufferIterator& operator+=(int n) {
@@ -118,13 +139,20 @@ struct GapBufferIterator {
         return ptr != obj->buffer + obj->bufferSize;
     }
 
+    bool operator<(const GapBufferIterator& that) const {
+        return this->ptr < that.ptr;
+    }
+
+    bool operator>(const GapBufferIterator& that) const {
+        return this->ptr > that.ptr;
+    }
+
     bool operator==(const GapBufferIterator& that) const {
         return this->ptr == that.ptr;
     }
 
-    bool operator==(const GapBufferSentinel&) const {
-        return !HasNext();
-    }
+private:
+    GapBufferIterator() {}
 };
 } // namespace
 
@@ -227,7 +255,8 @@ void Ionl::TextEdit::Show() {
         return;
     }
 
-    ImDrawList* drawList = window->DrawList;
+    auto contentRegionAvail = ImGui::GetContentRegionAvail();
+    auto drawList = window->DrawList;
 
     bool escaping = false;
     FaceDescription faceDesc;
@@ -236,9 +265,15 @@ void Ionl::TextEdit::Show() {
     LocateFace(faceDesc, faceFont, faceColor);
 
     ImVec2 textPos = window->DC.CursorPos;
+    float textStartX = textPos.x;
     float totalHeight = 0.0f;
 
+    // TODO use the corret font for each character
+    auto wordWrapFont = gTextStyles.faceFonts[MF_Proportional];
     GapBufferIterator cursor(*buffer);
+    GapBufferIterator end(*buffer);
+    end.SetEnd();
+    GapBufferIterator wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, cursor, end, contentRegionAvail.x);
 
     // NOTE: pattern must be ASCII
     auto chMatches = [&](std::string_view patternStr) {
@@ -283,10 +318,16 @@ void Ionl::TextEdit::Show() {
     };
 
     while (cursor.HasNext()) {
-        if (*cursor == '\n') {
+        bool isLineBreak = *cursor == '\n';
+        bool isWordWrap = cursor > wrapPoint;
+        if (isLineBreak || isWordWrap) {
+            if (isWordWrap) {
+                // TODO fix position calculation: this currently assumes all glyphs are of the regular proportional variant, so for e.g. all bold text, or all code text it's broken
+                wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, cursor, end, contentRegionAvail.x);
+            }
             ++cursor;
             float dy = faceFont->FontSize + linePadding;
-            textPos.x = window->DC.CursorPos.x;
+            textPos.x = textStartX;
             textPos.y += dy;
             totalHeight += dy;
             continue;
@@ -316,6 +357,7 @@ void Ionl::TextEdit::Show() {
             cursor = oldCursor;
             drawList->PrimReserve(charCount * 6, charCount * 4);
             size_t charsDrawn = 0;
+            // TODO handle line wrap
             while (*cursor != '\n' && cursor.HasNext()) {
                 if (drawGlyph(*cursor)) {
                     charsDrawn += 1;
@@ -325,7 +367,7 @@ void Ionl::TextEdit::Show() {
             drawList->PrimUnreserve((charCount - charsDrawn) * 6, (charCount - charsDrawn) * 4);
 
             float dy = faceFont->FontSize + linePadding;
-            textPos.x = window->DC.CursorPos.x;
+            textPos.x = textStartX;
             textPos.y += dy;
             totalHeight += dy;
 
@@ -420,7 +462,7 @@ void Ionl::TextEdit::Show() {
                     break;
                 }
 
-                // Iatlic
+                // Italic
                 if (chConsume("*"sv, faceDesc.italic) ||
                     chConsume("_"sv, faceDesc.italic))
                 {
@@ -461,11 +503,11 @@ void Ionl::TextEdit::Show() {
 
     // For the last line (which doesn't end in a \n)
     float dy = faceFont->FontSize + linePadding;
-    textPos.x = window->DC.CursorPos.x;
+    textPos.x = textStartX;
     textPos.y += dy;
     totalHeight += dy;
 
-    ImVec2 widgetSize(ImGui::GetContentRegionAvail().x, totalHeight);
+    ImVec2 widgetSize(contentRegionAvail.x, totalHeight);
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + widgetSize };
     ImGui::ItemSize(bb);
     if (!ImGui::ItemAdd(bb, id)) {
@@ -473,6 +515,8 @@ void Ionl::TextEdit::Show() {
     }
 
 #ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
-    ImGui::GetForegroundDrawList()->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
+    auto dl = ImGui::GetForegroundDrawList();
+    dl->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
+    dl->AddRect(bb.Min, bb.Min + contentRegionAvail, IM_COL32(255, 0, 255, 255));
 #endif
 }

@@ -3356,7 +3356,7 @@ const ImFontGlyph* ImFont::FindGlyphNoFallback(ImWchar c) const
 }
 
 // Wrapping skips upcoming blanks
-static inline const char* CalcWordWrapNextLineStart(const char* text, const char* text_end)
+const char* ImGui::CalcWordWrapNextLineStart(const char* text, const char* text_end)
 {
     while (text < text_end && ImCharIsBlankA(*text))
         text++;
@@ -3364,127 +3364,13 @@ static inline const char* CalcWordWrapNextLineStart(const char* text, const char
         text++;
     return text;
 }
-static inline const ImWchar* CalcWordWrapNextLineStart(const ImWchar* text, const ImWchar* text_end)
+const ImWchar* ImGui::CalcWordWrapNextLineStart(const ImWchar* text, const ImWchar* text_end)
 {
     while (text < text_end && ImCharIsBlankW(*text))
         text++;
     if (*text == '\n')
         text++;
     return text;
-}
-
-// Simple word-wrapping for English, not full-featured. Please submit failing cases!
-// This will return the next location to wrap from. If no wrapping if necessary, this will fast-forward to e.g. text_end.
-// FIXME: Much possible improvements (don't cut things like "word !", "word!!!" but cut within "word,,,,", more sensible support for punctuations, support for Unicode punctuations, etc.)
-template <typename TIter>
-TIter ImCalcWordWrapPosition(const ImFont* font, float scale, TIter text, TIter text_end, float wrap_width)
-{
-    // For references, possible wrap point marked with ^
-    //  "aaa bbb, ccc,ddd. eee   fff. ggg!"
-    //      ^    ^    ^   ^   ^__    ^    ^
-
-    // List of hardcoded separators: .,;!?'"
-
-    // Skip extra blanks after a line returns (that includes not counting them in width computation)
-    // e.g. "Hello    world" --> "Hello" "World"
-
-    // Cut words that cannot possibly fit within one line.
-    // e.g.: "The tropical fish" with ~5 characters worth of width --> "The tr" "opical" "fish"
-    float line_width = 0.0f;
-    float word_width = 0.0f;
-    float blank_width = 0.0f;
-    wrap_width /= scale; // We work with unscaled widths to avoid scaling every characters
-
-    TIter word_end = text;
-    TIter prev_word_end = NULL;
-    bool inside_word = true;
-
-    TIter s = text;
-    while (s < text_end)
-    {
-        unsigned int c = (unsigned int)*s;
-        TIter next_s;
-        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(*text)>, char>)
-        {
-            if (c < 0x80)
-            {
-                next_s = s + 1;
-            }
-            else
-            {
-                next_s = s + ImTextCharFromUtf8(&c, s, text_end);
-                if (c == 0)
-                    break;
-            }
-        }
-        else
-        {
-            next_s = s + 1;
-        }
-
-        if (c < 32)
-        {
-            if (c == '\n')
-            {
-                line_width = word_width = blank_width = 0.0f;
-                inside_word = true;
-                s = next_s;
-                continue;
-            }
-            if (c == '\r')
-            {
-                s = next_s;
-                continue;
-            }
-        }
-
-        const float char_width = ((int)c < font->IndexAdvanceX.Size ? font->IndexAdvanceX.Data[c] : font->FallbackAdvanceX);
-        if (ImCharIsBlankW(c))
-        {
-            if (inside_word)
-            {
-                line_width += blank_width;
-                blank_width = 0.0f;
-                word_end = s;
-            }
-            blank_width += char_width;
-            inside_word = false;
-        }
-        else
-        {
-            word_width += char_width;
-            if (inside_word)
-            {
-                word_end = next_s;
-            }
-            else
-            {
-                prev_word_end = word_end;
-                line_width += word_width + blank_width;
-                word_width = blank_width = 0.0f;
-            }
-
-            // Allow wrapping after punctuation.
-            inside_word = (c != '.' && c != ',' && c != ';' && c != '!' && c != '?' && c != '\"');
-        }
-
-        // We ignore blank width at the end of the line (they can be skipped)
-        if (line_width + word_width > wrap_width)
-        {
-            // Words that cannot possibly fit within an entire line will be cut anywhere.
-            if (word_width < wrap_width)
-                s = prev_word_end ? prev_word_end : word_end;
-            break;
-        }
-
-        s = next_s;
-    }
-
-    // Wrap_width is too small to fit anything. Force displaying 1 character to minimize the height discontinuity.
-    // +1 may not be a character start point in UTF-8 but it's ok because caller loops use (text >= word_wrap_eol).
-    if (s == text && text < text_end)
-        return s + 1;
-    return s;
 }
 
 const char* ImFont::CalcWordWrapPosition(float scale, const char* text, const char* text_end, float wrap_width) const
@@ -3528,7 +3414,7 @@ ImVec2 ImCalcTextSize(const ImFont* font, float size, float max_width, float wra
                 text_size.y += line_height;
                 line_width = 0.0f;
                 word_wrap_eol = NULL;
-                s = CalcWordWrapNextLineStart(s, text_end); // Wrapping skips upcoming blanks
+                s = ImGui::CalcWordWrapNextLineStart(s, text_end); // Wrapping skips upcoming blanks
                 continue;
             }
         }
@@ -3645,7 +3531,7 @@ void ImRenderText(const ImFont* font, ImDrawList* draw_list, float size, const I
                 // If the specs for CalcWordWrapPosition() were reworked to optionally return on \n we could combine both.
                 // However it is still better than nothing performing the fast-forward!
                 s = font->CalcWordWrapPosition(scale, s, line_end, wrap_width);
-                s = CalcWordWrapNextLineStart(s, text_end);
+                s = ImGui::CalcWordWrapNextLineStart(s, text_end);
             }
             else
             {
@@ -3697,7 +3583,7 @@ void ImRenderText(const ImFont* font, ImDrawList* draw_list, float size, const I
                 x = start_x;
                 y += line_height;
                 word_wrap_eol = NULL;
-                s = CalcWordWrapNextLineStart(s, text_end); // Wrapping skips upcoming blanks
+                s = ImGui::CalcWordWrapNextLineStart(s, text_end); // Wrapping skips upcoming blanks
                 continue;
             }
         }

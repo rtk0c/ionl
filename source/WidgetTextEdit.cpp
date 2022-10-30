@@ -1,8 +1,5 @@
 #include "WidgetTextEdit.hpp"
 
-#include "Macros.hpp"
-#include "Utils.hpp"
-
 #include "imgui_internal.h"
 
 using namespace std::string_view_literals;
@@ -68,9 +65,6 @@ void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
         /*Old back*/ buf.buffer + frontSize + oldGapSize,
         oldBackSize);
 }
-
-struct GapBufferSentinel {
-};
 
 struct GapBufferIterator {
     TextBuffer* obj;
@@ -273,7 +267,14 @@ void Ionl::TextEdit::Show() {
     GapBufferIterator cursor(*buffer);
     GapBufferIterator end(*buffer);
     end.SetEnd();
+
     GapBufferIterator wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, cursor, end, contentRegionAvail.x);
+    auto wrapLine = [&]() {
+        float dy = faceFont->FontSize + linePadding;
+        textPos.x = textStartX;
+        textPos.y += dy;
+        totalHeight += dy;
+    };
 
     // NOTE: pattern must be ASCII
     auto chMatches = [&](std::string_view patternStr) {
@@ -326,10 +327,32 @@ void Ionl::TextEdit::Show() {
                 wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, cursor, end, contentRegionAvail.x);
             }
             ++cursor;
-            float dy = faceFont->FontSize + linePadding;
-            textPos.x = textStartX;
-            textPos.y += dy;
-            totalHeight += dy;
+
+            // Position at current end of line
+            auto oldTextPos = textPos;
+            // NOTE: this updates `textPos`
+            wrapLine();
+
+            // Draw the text decoration to current pos (end of line), and then "ransplant" them to the next line
+            if (faceDesc.underline.state) {
+                float yOffset = faceFont->FontSize;
+                drawList->AddLine(
+                    ImVec2(faceDesc.underline.pos.x, faceDesc.underline.pos.y + yOffset),
+                    ImVec2(oldTextPos.x, oldTextPos.y + yOffset),
+                    faceColor);
+
+                faceDesc.underline.pos = textPos;
+            }
+            if (faceDesc.strikethrough.state) {
+                float yOffset = faceFont->FontSize / 2;
+                drawList->AddLine(
+                    ImVec2(faceDesc.strikethrough.pos.x, faceDesc.strikethrough.pos.y + yOffset),
+                    ImVec2(oldTextPos.x, oldTextPos.y + yOffset),
+                    faceColor);
+
+                faceDesc.strikethrough.pos = textPos;
+            }
+
             continue;
         }
 
@@ -348,6 +371,9 @@ void Ionl::TextEdit::Show() {
             faceFont = gTextStyles.faceFonts[MF_Heading1 + headingLevel];
             faceColor = gTextStyles.faceColors[MF_Heading1 + headingLevel];
 
+            // TODO is it a better idea to create title faces, and then let the main loop handle it?
+            // that way we could reduce quite a few lines of duplicated logic, especially for handling line breaks
+
             cursor = oldCursor;
             size_t charCount = 0;
             while (*cursor != '\n' && cursor.HasNext()) {
@@ -355,10 +381,18 @@ void Ionl::TextEdit::Show() {
                 ++cursor;
             }
             cursor = oldCursor;
+
+            // Recalculate wrap position, because in the general case we pretend all text is the regular proportional face
+            // TODO get rid of this once the general case can handle fonts properly
+            wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, cursor, end, contentRegionAvail.x);
+
             drawList->PrimReserve(charCount * 6, charCount * 4);
             size_t charsDrawn = 0;
-            // TODO handle line wrap
             while (*cursor != '\n' && cursor.HasNext()) {
+                if (cursor > wrapPoint) {
+                    wrapLine();
+                    wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, cursor, end, contentRegionAvail.x);
+                }
                 if (drawGlyph(*cursor)) {
                     charsDrawn += 1;
                 }
@@ -366,12 +400,8 @@ void Ionl::TextEdit::Show() {
             }
             drawList->PrimUnreserve((charCount - charsDrawn) * 6, (charCount - charsDrawn) * 4);
 
-            float dy = faceFont->FontSize + linePadding;
-            textPos.x = textStartX;
-            textPos.y += dy;
-            totalHeight += dy;
-
-            // Skip the \n character
+            // Handle the \n character
+            wrapLine();
             ++cursor;
 
             // Restore to regular face
@@ -502,10 +532,7 @@ void Ionl::TextEdit::Show() {
     }
 
     // For the last line (which doesn't end in a \n)
-    float dy = faceFont->FontSize + linePadding;
-    textPos.x = textStartX;
-    textPos.y += dy;
-    totalHeight += dy;
+    wrapLine();
 
     ImVec2 widgetSize(contentRegionAvail.x, totalHeight);
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + widgetSize };

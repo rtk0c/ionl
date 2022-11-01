@@ -65,18 +65,40 @@ struct TextBuffer {
 /// - Height depends on the text inside
 struct TextEdit {
     /* [In] */ ImGuiID id;
-    /* [In] */ TextBuffer* buffer;
     /* [In] */ float linePadding = 0.0f;
+    /* [In] */ TextBuffer* buffer;
 
-    struct Cursor {
-        // NOTE: should always satisfy `idx == buffer->frontSize`
-        size_t idx;
-        // false: the cursor is before the wrap (prev line), or that no soft wrap is applied
-        // true: the cursor is after the wrap (next line)
-        bool affinity;
-    } _cursor;
+    // `_cursorIdx == buffer->frontSize` may not be true if the user just moved the cursor but didn't enter any text
+    // This is an optimization for when the user is just navigating by clicking in places, where if we had adjusted
+    // the buffer gap, it would be completely unnecessary work and waste battery.
+
+    // The selection range is described by:
+    //     let begin = min(_cursorIdx, _anchor)
+    //     let end = max(_cursorIdx, _anchor)
+    //     [begin, end)
+    // As such:
+    // - if _cursorIdx == _anchor, there is no selection
+
+    // Generates during render loop, a list of character indices which line wraps (both soft and hard wraps)
+    ImVector<size_t> _wrapPoints;
+    size_t _cursorIdx = 0;
+    size_t _anchor = 0;
+    // Offset of the glyph that the cursor is hovering, from draw origin
+    ImVec2 _cursorOffset;
+    ImFont* _cursorAssociatedFont = nullptr;
+    float _cursorAnimTimer = 0.0f;
+
+    // false: the cursor is after the wrap (next line), or that no soft wrap is applied
+    // true: the cursor is before the wrap (prev line)
+    // NOTE: we don't treat \n in the buffer as an actual glyph, so this is used even on real line breaks
+    bool _cursorAffinity = false;
 
     void Show();
+
+    bool HasSelection() const;
+    size_t GetSelectionBegin() const;
+    size_t GetSelectionEnd() const;
+    void SetSelection(size_t begin, size_t end, bool cursorAtBegin = false);
 };
 
 } // namespace Ionl

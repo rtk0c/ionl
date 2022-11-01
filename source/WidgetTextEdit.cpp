@@ -66,6 +66,27 @@ void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
         oldBackSize);
 }
 
+ImWchar* CalcPtrFromIdx(TextBuffer& buf, size_t index) {
+    IM_ASSERT(index >= 0 && index < (buf.bufferSize - buf.gapSize));
+    if (index < buf.frontSize) {
+        return buf.buffer + index;
+    } else {
+        return buf.buffer + (index + buf.frontSize + buf.gapSize);
+    }
+}
+
+size_t CalcIdxFromPtr(const TextBuffer& buf, const ImWchar* ptr) {
+    size_t bufferIdx = ptr - buf.buffer;
+    if (bufferIdx < buf.frontSize) {
+        return bufferIdx;
+    } else {
+        return bufferIdx - buf.frontSize - buf.bufferSize;
+    }
+}
+
+size_t CalcAdjacentWordPos(TextBuffer& buf, size_t index, int delta) {
+}
+
 struct GapBufferIterator {
     TextBuffer* obj;
     ImWchar* ptr;
@@ -244,6 +265,8 @@ void LocateFace(const FaceDescription& desc, ImFont*& outFont, ImU32& outColor) 
 } // namespace
 
 void Ionl::TextEdit::Show() {
+    auto& g = *ImGui::GetCurrentContext();
+    auto& io = ImGui::GetIO();
     auto window = ImGui::GetCurrentWindow();
     if (window->SkipItems) {
         return;
@@ -264,11 +287,11 @@ void Ionl::TextEdit::Show() {
 
     // TODO use the corret font for each character
     auto wordWrapFont = gTextStyles.faceFonts[MF_Proportional];
-    GapBufferIterator cursor(*buffer);
+    GapBufferIterator it(*buffer);
     GapBufferIterator end(*buffer);
     end.SetEnd();
 
-    GapBufferIterator wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, cursor, end, contentRegionAvail.x);
+    GapBufferIterator wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
     auto wrapLine = [&]() {
         float dy = faceFont->FontSize + linePadding;
         textPos.x = textStartX;
@@ -276,10 +299,12 @@ void Ionl::TextEdit::Show() {
         totalHeight += dy;
     };
 
+    auto cursorPtr = CalcPtrFromIdx(*buffer, _cursorIdx);
+
     // NOTE: pattern must be ASCII
     auto chMatches = [&](std::string_view patternStr) {
         auto pattern = patternStr.data();
-        auto haystack = cursor;
+        auto haystack = it;
         while (true) {
             // Matched the whole pattern
             if (*pattern == '\0') return true;
@@ -318,22 +343,29 @@ void Ionl::TextEdit::Show() {
         return false;
     };
 
-    while (cursor.HasNext()) {
-        bool isLineBreak = *cursor == '\n';
-        bool isWordWrap = cursor > wrapPoint;
+    // Clear but don't free memory
+    _wrapPoints.resize(0);
+
+    // TODO move markdown parser loop out
+    // TODO use gap buffer streaming, to reduce branching inside GapBufferIterator
+    // TOOD define line as "characters, followed by \n" so that we can have a valid index for the cursor at the end of buffer
+    while (it.HasNext()) {
+        bool isLineBreak = *it == '\n';
+        bool isWordWrap = it > wrapPoint;
         if (isLineBreak || isWordWrap) {
             if (isWordWrap) {
                 // TODO fix position calculation: this currently assumes all glyphs are of the regular proportional variant, so for e.g. all bold text, or all code text it's broken
-                wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, cursor, end, contentRegionAvail.x);
+                wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
             }
-            ++cursor;
+            ++it;
 
             // Position at current end of line
             auto oldTextPos = textPos;
             // NOTE: this updates `textPos`
             wrapLine();
+            _wrapPoints.push_back(CalcIdxFromPtr(*buffer, it.ptr));
 
-            // Draw the text decoration to current pos (end of line), and then "ransplant" them to the next line
+            // Draw the text decoration to current pos (end of line), and then "transplant" them to the next line
             if (faceDesc.underline.state) {
                 float yOffset = faceFont->FontSize;
                 drawList->AddLine(
@@ -353,16 +385,18 @@ void Ionl::TextEdit::Show() {
                 faceDesc.strikethrough.pos = textPos;
             }
 
-            continue;
+            if (isLineBreak) {
+                continue;
+            }
         }
 
-        auto oldCursor = cursor;
+        auto oldCursor = it;
 
         // Heading parsing
-        if (*cursor == '#') {
+        if (*it == '#') {
             int headingLevel = 0;
-            while (*cursor == '#') {
-                ++cursor;
+            while (*it == '#') {
+                ++it;
                 headingLevel += 1;
             }
             headingLevel = ImMin<int>(headingLevel, MF_META_HeadingMax);
@@ -374,36 +408,45 @@ void Ionl::TextEdit::Show() {
             // TODO is it a better idea to create title faces, and then let the main loop handle it?
             // that way we could reduce quite a few lines of duplicated logic, especially for handling line breaks
 
-            cursor = oldCursor;
+            it = oldCursor;
             size_t charCount = 0;
-            while (*cursor != '\n' && cursor.HasNext()) {
+            while (*it != '\n' && it.HasNext()) {
                 charCount += 1;
-                ++cursor;
+                ++it;
             }
-            cursor = oldCursor;
+            it = oldCursor;
 
             // Recalculate wrap position, because in the general case we pretend all text is the regular proportional face
             // TODO get rid of this once the general case can handle fonts properly
-            wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, cursor, end, contentRegionAvail.x);
+            wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, it, end, contentRegionAvail.x);
 
             drawList->PrimReserve(charCount * 6, charCount * 4);
             size_t charsDrawn = 0;
-            while (*cursor != '\n' && cursor.HasNext()) {
-                if (cursor > wrapPoint) {
+            while (*it != '\n' && it.HasNext()) {
+                if (it > wrapPoint) {
                     wrapLine();
-                    wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, cursor, end, contentRegionAvail.x);
+                    wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, it, end, contentRegionAvail.x);
                 }
-                if (drawGlyph(*cursor)) {
+
+                if (it.ptr == cursorPtr) {
+                    _cursorAssociatedFont = faceFont;
+                    _cursorOffset = textPos - window->DC.CursorPos;
+                }
+
+                if (drawGlyph(*it)) {
                     charsDrawn += 1;
                 }
-                ++cursor;
+                ++it;
             }
             drawList->PrimUnreserve((charCount - charsDrawn) * 6, (charCount - charsDrawn) * 4);
 
             // Handle the \n character
             wrapLine();
-            ++cursor;
+            ++it;
 
+            // Recalculate wrapPoint using normal face
+            // TODO get rid of this once the general case can handle fonts properly
+            wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
             // Restore to regular face
             faceFont = gTextStyles.faceFonts[MF_Proportional];
             faceColor = gTextStyles.faceColors[MF_Proportional];
@@ -435,7 +478,7 @@ void Ionl::TextEdit::Show() {
             if (escaping) {
                 escaping = false;
 
-                cursor += pattern.size();
+                it += pattern.size();
                 return false;
             }
 
@@ -448,12 +491,12 @@ void Ionl::TextEdit::Show() {
             } else {
                 // Opening specifier
                 props.state = true;
-                props.loc = cursor.ptr;
+                props.loc = it.ptr;
                 props.pos = textPos;
                 LocateFace(faceDesc, faceFont, faceColor);
             }
 
-            cursor += pattern.size();
+            it += pattern.size();
             segmentSize = pattern.size();
             return true;
         };
@@ -503,9 +546,9 @@ void Ionl::TextEdit::Show() {
             // Set escaping state for the next character
             // If this is a '\', and it's being escaped, treat this just as plain text; otherwise escape the next character
             // If this is anything else, this condition will evaluate to false
-            escaping = *cursor == '\\' && !escaping;
+            escaping = *it == '\\' && !escaping;
             segmentSize = 1;
-            ++cursor;
+            ++it;
         } while (false);
 
         // We can't do this per-line or per-buffer, because other AddLine() AddXxx() calls happen within this loop too, which will mess up the assumptions
@@ -513,7 +556,16 @@ void Ionl::TextEdit::Show() {
         drawList->PrimReserve(segmentSize * 6, segmentSize * 4);
         // Draw the current segment of text, [oldCursor, cursor)
         size_t charsDrawn = 0;
-        for (auto ch = oldCursor; ch != cursor; ++ch) {
+        for (auto ch = oldCursor; ch != it; ++ch) {
+            // Handle cursor positioning
+            // NOTE: we must do this before calling drawGlyph(), because it moves textPos to the next glyph
+            if ((!_cursorAffinity && ch.ptr - 1 == cursorPtr) ||
+                (_cursorAffinity && ch.ptr == cursorPtr))
+            {
+                _cursorAssociatedFont = faceFont;
+                _cursorOffset = textPos - window->DC.CursorPos;
+            }
+
             if (drawGlyph(*ch)) {
                 charsDrawn += 1;
             }
@@ -541,9 +593,107 @@ void Ionl::TextEdit::Show() {
         return;
     }
 
+    // FIXME: or ImGui::IsItemHovered()?
+    bool hovered = ImGui::ItemHoverable(bb, id);
+    bool userClicked = hovered && io.MouseClicked[ImGuiMouseButton_Left];
+
+    auto activeId = ImGui::GetActiveID();
+
+    if (activeId != id && userClicked) {
+        activeId = id;
+
+        // Adapted from imgui_widget.cpp Imgui::InputTextEx()
+
+        ImGui::SetActiveID(id, window);
+        ImGui::SetFocusID(id, window);
+        ImGui::FocusWindow(window);
+
+        // Declare our inputs
+        ImGui::SetActiveIdUsingKey(ImGuiKey_LeftArrow);
+        ImGui::SetActiveIdUsingKey(ImGuiKey_RightArrow);
+        ImGui::SetActiveIdUsingKey(ImGuiKey_UpArrow);
+        ImGui::SetActiveIdUsingKey(ImGuiKey_DownArrow);
+        ImGui::SetActiveIdUsingKey(ImGuiKey_Escape);
+        ImGui::SetActiveIdUsingKey(ImGuiKey_NavGamepadCancel);
+        ImGui::SetActiveIdUsingKey(ImGuiKey_Home);
+        ImGui::SetActiveIdUsingKey(ImGuiKey_End);
+    }
+
+    size_t bufferLength = buffer->bufferSize - buffer->gapSize;
+
+    // Process keyboard inputs
+    if (activeId == id && !g.ActiveIdIsJustActivated) {
+        bool isOSX = io.ConfigMacOSXBehaviors;
+        bool isMovingWord = isOSX ? io.KeyAlt : io.KeyCtrl;
+
+        bool leftArrow = ImGui::IsKeyPressed(ImGuiKey_LeftArrow);
+        bool rightArrow = ImGui::IsKeyPressed(ImGuiKey_RightArrow);
+
+        if (leftArrow) {
+            // TODO calculate affinity
+            _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, -1) : -1;
+            _cursorIdx = ImClamp<size_t>(_cursorIdx, 0, bufferLength - 1);
+            _cursorAnimTimer = 0.0f;
+        } else if (rightArrow) {
+            _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, +1) : +1;
+            _cursorIdx = ImClamp<size_t>(_cursorIdx, 0, bufferLength - 1);
+            _cursorAnimTimer = 0.0f;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
+            // TODO
+        } else if (ImGui::IsKeyPressed(ImGuiKey_End)) {
+            // TODO
+        }
+    }
+
+    // Draw cursor and selection
+    if (activeId == id) {
+        _cursorAnimTimer += io.DeltaTime;
+
+        bool cursorVisible = ImFmod(_cursorAnimTimer, 1.20f) <= 0.80f;
+        ImVec2 cursorPos = bb.Min + _cursorOffset;
+        ImRect cursorRect{
+            cursorPos.x,
+            cursorPos.y + 1.5f,
+            cursorPos.x + 1.0f,
+            cursorPos.y + _cursorAssociatedFont->FontSize - 0.5f,
+        };
+        if (cursorVisible) {
+            drawList->AddLine(cursorRect.Min, cursorRect.GetBL(), ImGui::GetColorU32(ImGuiCol_Text));
+        }
+    }
+
+    // TODO handle up/down arrow at edge of the document should move to prev/next bullet point
+
+    // Release focus when we click outside
+    if (activeId == id && io.MouseClicked[ImGuiMouseButton_Left] && !hovered) {
+        ImGui::ClearActiveID();
+    }
+
 #ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
     auto dl = ImGui::GetForegroundDrawList();
     dl->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
     dl->AddRect(bb.Min, bb.Min + contentRegionAvail, IM_COL32(255, 0, 255, 255));
 #endif
+}
+
+bool TextEdit::HasSelection() const {
+    return _cursorIdx == _anchor;
+}
+
+size_t TextEdit::GetSelectionBegin() const {
+    return ImMin(_cursorIdx, _anchor);
+}
+
+size_t TextEdit::GetSelectionEnd() const {
+    return ImMax(_cursorIdx, _anchor);
+}
+
+void TextEdit::SetSelection(size_t begin, size_t end, bool cursorAtBegin) {
+    if (cursorAtBegin) {
+        _cursorIdx = begin;
+        _anchor = end;
+    } else {
+        _cursorIdx = end;
+        _anchor = begin;
+    }
 }

@@ -9,84 +9,6 @@ Ionl::TextStyles Ionl::gTextStyles;
 namespace {
 using namespace Ionl;
 
-ImWchar* AllocateBuffer(size_t size) {
-    return (ImWchar*)malloc(sizeof(ImWchar) * size);
-}
-void ReallocateBuffer(ImWchar*& oldBuffer, size_t newSize) {
-    oldBuffer = (ImWchar*)realloc(oldBuffer, newSize);
-}
-
-void MoveGap(TextBuffer& buf, size_t newIdx) {
-    size_t oldIdx = buf.frontSize;
-    if (oldIdx == newIdx) return;
-
-    // NOTE: we must use memmove() because gap size may be smaller than movement distance, in which case the src region and dst region will overlap
-    auto frontEnd = buf.buffer + buf.frontSize;
-    auto backBegin = buf.buffer + buf.frontSize + buf.gapSize;
-    if (oldIdx < newIdx) {
-        // Moving forwards
-
-        size_t size = newIdx - oldIdx;
-        memmove(frontEnd, backBegin, newIdx - oldIdx);
-    } else /* oldIdx > newIdx */ {
-        // Moving backwards
-
-        size_t size = oldIdx - newIdx;
-        memmove(backBegin - size, frontEnd - size, size);
-    }
-    buf.frontSize = newIdx;
-}
-
-void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
-    // Some assumptions:
-    // - Increasing the gap size means the user is editing this buffer, which means they'll probably edit it some more
-    // - Hence, it's likely that this buffer will be reallocated multiple times in the future
-    // - Hence, we round buffer size to a power of 2 to reduce malloc() overhead
-
-    size_t frontSize = buf.frontSize;
-    size_t oldBackSize = buf.bufferSize - buf.frontSize - buf.gapSize;
-    size_t oldGapSize = buf.gapSize;
-
-    size_t newBufSize = ImUpperPowerOfTwo(buf.bufferSize);
-    size_t minimumBufSize = buf.bufferSize - buf.gapSize + newBufSize;
-    // TODO keep a reasonable size once we get above e.g. 8KB?
-    do {
-        newBufSize *= 2;
-    } while (newBufSize < minimumBufSize);
-
-    ReallocateBuffer(buf.buffer, newBufSize);
-
-    buf.bufferSize = newBufSize;
-    buf.frontSize /*keep intact*/;
-    buf.gapSize = newBufSize - frontSize - oldBackSize;
-
-    memmove(
-        /*New back's location*/ buf.buffer + frontSize + buf.gapSize,
-        /*Old back*/ buf.buffer + frontSize + oldGapSize,
-        oldBackSize);
-}
-
-ImWchar* CalcPtrFromIdx(TextBuffer& buf, size_t index) {
-    IM_ASSERT(index >= 0 && index < (buf.bufferSize - buf.gapSize));
-    if (index < buf.frontSize) {
-        return buf.buffer + index;
-    } else {
-        return buf.buffer + (index + buf.frontSize + buf.gapSize);
-    }
-}
-
-size_t CalcIdxFromPtr(const TextBuffer& buf, const ImWchar* ptr) {
-    size_t bufferIdx = ptr - buf.buffer;
-    if (bufferIdx < buf.frontSize) {
-        return bufferIdx;
-    } else {
-        return bufferIdx - buf.frontSize - buf.bufferSize;
-    }
-}
-
-size_t CalcAdjacentWordPos(TextBuffer& buf, size_t index, int delta) {
-}
-
 struct GapBufferIterator {
     TextBuffer* obj;
     ImWchar* ptr;
@@ -169,6 +91,130 @@ struct GapBufferIterator {
 private:
     GapBufferIterator() {}
 };
+ImWchar* AllocateBuffer(size_t size) {
+    return (ImWchar*)malloc(sizeof(ImWchar) * size);
+}
+void ReallocateBuffer(ImWchar*& oldBuffer, size_t newSize) {
+    oldBuffer = (ImWchar*)realloc(oldBuffer, newSize);
+}
+
+void MoveGap(TextBuffer& buf, size_t newIdx) {
+    size_t oldIdx = buf.frontSize;
+    if (oldIdx == newIdx) return;
+
+    // NOTE: we must use memmove() because gap size may be smaller than movement distance, in which case the src region and dst region will overlap
+    auto frontEnd = buf.buffer + buf.frontSize;
+    auto backBegin = buf.buffer + buf.frontSize + buf.gapSize;
+    if (oldIdx < newIdx) {
+        // Moving forwards
+
+        size_t size = newIdx - oldIdx;
+        memmove(frontEnd, backBegin, newIdx - oldIdx);
+    } else /* oldIdx > newIdx */ {
+        // Moving backwards
+
+        size_t size = oldIdx - newIdx;
+        memmove(backBegin - size, frontEnd - size, size);
+    }
+    buf.frontSize = newIdx;
+}
+
+void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
+    // Some assumptions:
+    // - Increasing the gap size means the user is editing this buffer, which means they'll probably edit it some more
+    // - Hence, it's likely that this buffer will be reallocated multiple times in the future
+    // - Hence, we round buffer size to a power of 2 to reduce malloc() overhead
+
+    size_t frontSize = buf.frontSize;
+    size_t oldBackSize = buf.bufferSize - buf.frontSize - buf.gapSize;
+    size_t oldGapSize = buf.gapSize;
+
+    size_t newBufSize = ImUpperPowerOfTwo(buf.bufferSize);
+    size_t minimumBufSize = buf.bufferSize - buf.gapSize + newBufSize;
+    // TODO keep a reasonable size once we get above e.g. 8KB?
+    do {
+        newBufSize *= 2;
+    } while (newBufSize < minimumBufSize);
+
+    ReallocateBuffer(buf.buffer, newBufSize);
+
+    buf.bufferSize = newBufSize;
+    buf.frontSize /*keep intact*/;
+    buf.gapSize = newBufSize - frontSize - oldBackSize;
+
+    memmove(
+        /*New back's location*/ buf.buffer + frontSize + buf.gapSize,
+        /*Old back*/ buf.buffer + frontSize + oldGapSize,
+        oldBackSize);
+}
+
+ImWchar* CalcPtrFromIdx(TextBuffer& buf, size_t index) {
+    IM_ASSERT(index >= 0 && index < (buf.bufferSize - buf.gapSize));
+    if (index < buf.frontSize) {
+        return buf.buffer + index;
+    } else {
+        return buf.buffer + (index + buf.frontSize + buf.gapSize);
+    }
+}
+
+size_t CalcIdxFromPtr(const TextBuffer& buf, const ImWchar* ptr) {
+    size_t bufferIdx = ptr - buf.buffer;
+    if (bufferIdx < buf.frontSize) {
+        return bufferIdx;
+    } else {
+        return bufferIdx - buf.frontSize - buf.gapSize;
+    }
+}
+
+bool IsCharAPartOfWord(ImWchar c) {
+    return !std::isspace(c);
+}
+
+bool IsWordBreaking(ImWchar a, ImWchar b) {
+    // TODO break on e.g. punctuation and letter boundaries
+    return false;
+}
+
+// TODO bring in ICU for a proper word breaking iterator
+// # Behavior
+// If the cursor is not at a word boundary, move towards the boundary of the current word.
+// If the cursor is at a word boundary, move towards the adjacent word's boundary. That is, if cursor is currently at the left boundary, it will be moved
+// to the previous word's left boundary; if it's at the right boundary, it will be moved to the next word's right boundary.
+//
+// Exceptionally, if there is no adjacent word the cursor will be clamped to the boundaries of the document.
+//
+// # Notes on terminology
+// "move towards" means to adjust the index forwards or backwards to the desired location, depending on `delta` being positive or negative.
+size_t CalcAdjacentWordPos(TextBuffer& buf, size_t index, int delta) {
+    GapBufferIterator it(buf);
+    it += index;
+
+    int dIdx = delta > 0 ? 1 : -1; // "delta index"
+    // TODO
+
+    return index;
+}
+
+// TODO these two functions are pretty much the same as CalcPtrFromIdx and CalcIdxFromPtr, clean up
+
+size_t MapLogicalIndexToBufferIndex(const TextBuffer& buf, size_t logicalIdx) {
+    if (logicalIdx < buf.frontSize) {
+        return logicalIdx;
+    } else {
+        return logicalIdx + buf.gapSize;
+    }
+}
+
+// If the buffer index does not point to a valid logical location (i.e. it points to somewhere in the gap), std::numeric_limits<size_t>::max() is returned
+size_t MapBufferIndexToLogicalIndex(const TextBuffer& buf, size_t bufferIdx) {
+    if (bufferIdx < buf.frontSize) {
+        return bufferIdx;
+    } else if (/* bufferIdx >= buf.frontSize && */ bufferIdx < (buf.frontSize + buf.gapSize)) {
+        return std::numeric_limits<size_t>::max();
+    } else {
+        return bufferIdx - buf.gapSize;
+    }
+}
 } // namespace
 
 Ionl::TextBuffer::TextBuffer()
@@ -292,7 +338,7 @@ void Ionl::TextEdit::Show() {
     end.SetEnd();
 
     GapBufferIterator wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
-    auto wrapLine = [&]() {
+    auto WrapLine = [&]() {
         float dy = faceFont->FontSize + linePadding;
         textPos.x = textStartX;
         textPos.y += dy;
@@ -302,7 +348,7 @@ void Ionl::TextEdit::Show() {
     auto cursorPtr = CalcPtrFromIdx(*buffer, _cursorIdx);
 
     // NOTE: pattern must be ASCII
-    auto chMatches = [&](std::string_view patternStr) {
+    auto ChMatches = [&](std::string_view patternStr) {
         auto pattern = patternStr.data();
         auto haystack = it;
         while (true) {
@@ -318,7 +364,7 @@ void Ionl::TextEdit::Show() {
             ++haystack;
         }
     };
-    auto drawGlyph = [&](ImWchar c) {
+    auto DrawGlyph = [&](ImWchar c) {
         auto glyph = faceFont->FindGlyph(c);
         if (!glyph) return false;
 
@@ -348,7 +394,7 @@ void Ionl::TextEdit::Show() {
 
     // TODO move markdown parser loop out
     // TODO use gap buffer streaming, to reduce branching inside GapBufferIterator
-    // TOOD define line as "characters, followed by \n" so that we can have a valid index for the cursor at the end of buffer
+    // TODO define line as "characters, followed by \n" so that we can have a valid index for the cursor at the end of buffer
     while (it.HasNext()) {
         bool isLineBreak = *it == '\n';
         bool isWordWrap = it > wrapPoint;
@@ -362,7 +408,7 @@ void Ionl::TextEdit::Show() {
             // Position at current end of line
             auto oldTextPos = textPos;
             // NOTE: this updates `textPos`
-            wrapLine();
+            WrapLine();
             _wrapPoints.push_back(CalcIdxFromPtr(*buffer, it.ptr));
 
             // Draw the text decoration to current pos (end of line), and then "transplant" them to the next line
@@ -390,7 +436,7 @@ void Ionl::TextEdit::Show() {
             }
         }
 
-        auto oldCursor = it;
+        auto oldIt = it;
 
         // Heading parsing
         if (*it == '#') {
@@ -401,20 +447,20 @@ void Ionl::TextEdit::Show() {
             }
             headingLevel = ImMin<int>(headingLevel, MF_META_HeadingMax);
 
-            // Do the all of the text rendering here (heading style overrides everything else)
+            // Do the all the text rendering here (heading style overrides everything else)
             faceFont = gTextStyles.faceFonts[MF_Heading1 + headingLevel];
             faceColor = gTextStyles.faceColors[MF_Heading1 + headingLevel];
 
             // TODO is it a better idea to create title faces, and then let the main loop handle it?
             // that way we could reduce quite a few lines of duplicated logic, especially for handling line breaks
 
-            it = oldCursor;
+            it = oldIt;
             size_t charCount = 0;
             while (*it != '\n' && it.HasNext()) {
                 charCount += 1;
                 ++it;
             }
-            it = oldCursor;
+            it = oldIt;
 
             // Recalculate wrap position, because in the general case we pretend all text is the regular proportional face
             // TODO get rid of this once the general case can handle fonts properly
@@ -424,16 +470,16 @@ void Ionl::TextEdit::Show() {
             size_t charsDrawn = 0;
             while (*it != '\n' && it.HasNext()) {
                 if (it > wrapPoint) {
-                    wrapLine();
+                    WrapLine();
                     wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, it, end, contentRegionAvail.x);
                 }
 
                 if (it.ptr == cursorPtr) {
                     _cursorAssociatedFont = faceFont;
-                    _cursorOffset = textPos - window->DC.CursorPos;
+                    _cursorVisualOffset = textPos - window->DC.CursorPos;
                 }
 
-                if (drawGlyph(*it)) {
+                if (DrawGlyph(*it)) {
                     charsDrawn += 1;
                 }
                 ++it;
@@ -441,7 +487,7 @@ void Ionl::TextEdit::Show() {
             drawList->PrimUnreserve((charCount - charsDrawn) * 6, (charCount - charsDrawn) * 4);
 
             // Handle the \n character
-            wrapLine();
+            WrapLine();
             ++it;
 
             // Recalculate wrapPoint using normal face
@@ -455,7 +501,7 @@ void Ionl::TextEdit::Show() {
         }
 
         // Code block parsing
-        if (chMatches("```")) {
+        if (ChMatches("```")) {
             // TODO
             continue;
         }
@@ -471,8 +517,8 @@ void Ionl::TextEdit::Show() {
         // Returns true if a formatting operator is consumed (may not be effective, i.e. escaped)
         // Returns false if nothing is consumed
         // NOTE: pattern must be ASCII
-        auto chConsume = [&](std::string_view pattern, FaceTrait& props) {
-            if (!chMatches(pattern)) return false;
+        auto ChConsume = [&](std::string_view pattern, FaceTrait& props) {
+            if (!ChMatches(pattern)) return false;
 
             // Treat as normal text
             if (escaping) {
@@ -503,15 +549,15 @@ void Ionl::TextEdit::Show() {
 
         do {
             // Inline code
-            // TOOD implement consecutive code collapsing
-            if (chConsume("`"sv, faceDesc.monospace)) break;
+            // TODO implement consecutive code collapsing
+            if (ChConsume("`"sv, faceDesc.monospace)) break;
             if (!faceDesc.monospace.state) {
                 // Bold
-                if (chConsume("**"sv, faceDesc.bold)) break;
+                if (ChConsume("**"sv, faceDesc.bold)) break;
 
                 // Underline
                 if (auto pos = faceDesc.underline.pos;
-                    chConsume("__"sv, faceDesc.underline))
+                    ChConsume("__"sv, faceDesc.underline))
                 {
                     // Closing specifier
                     if (!faceDesc.underline.state) {
@@ -524,7 +570,7 @@ void Ionl::TextEdit::Show() {
 
                 // Strikethrough
                 if (auto pos = faceDesc.strikethrough.pos;
-                    chConsume("~~"sv, faceDesc.strikethrough))
+                    ChConsume("~~"sv, faceDesc.strikethrough))
                 {
                     // Closing specifier
                     if (!faceDesc.strikethrough.state) {
@@ -536,8 +582,8 @@ void Ionl::TextEdit::Show() {
                 }
 
                 // Italic
-                if (chConsume("*"sv, faceDesc.italic) ||
-                    chConsume("_"sv, faceDesc.italic))
+                if (ChConsume("*"sv, faceDesc.italic) ||
+                    ChConsume("_"sv, faceDesc.italic))
                 {
                     break;
                 }
@@ -554,19 +600,19 @@ void Ionl::TextEdit::Show() {
         // We can't do this per-line or per-buffer, because other AddLine() AddXxx() calls happen within this loop too, which will mess up the assumptions
         // TODO this is a quite dumb overhead, optimize
         drawList->PrimReserve(segmentSize * 6, segmentSize * 4);
-        // Draw the current segment of text, [oldCursor, cursor)
+        // Draw the current segment of text, [oldIt, cursor)
         size_t charsDrawn = 0;
-        for (auto ch = oldCursor; ch != it; ++ch) {
+        for (auto ch = oldIt; ch != it; ++ch) {
             // Handle cursor positioning
-            // NOTE: we must do this before calling drawGlyph(), because it moves textPos to the next glyph
+            // NOTE: we must do this before calling DrawGlyph(), because it moves textPos to the next glyph
             if ((!_cursorAffinity && ch.ptr - 1 == cursorPtr) ||
                 (_cursorAffinity && ch.ptr == cursorPtr))
             {
                 _cursorAssociatedFont = faceFont;
-                _cursorOffset = textPos - window->DC.CursorPos;
+                _cursorVisualOffset = textPos - window->DC.CursorPos;
             }
 
-            if (drawGlyph(*ch)) {
+            if (DrawGlyph(*ch)) {
                 charsDrawn += 1;
             }
         }
@@ -584,7 +630,7 @@ void Ionl::TextEdit::Show() {
     }
 
     // For the last line (which doesn't end in a \n)
-    wrapLine();
+    WrapLine();
 
     ImVec2 widgetSize(contentRegionAvail.x, totalHeight);
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + widgetSize };
@@ -646,11 +692,12 @@ void Ionl::TextEdit::Show() {
     }
 
     // Draw cursor and selection
+    // TODO move drawing cursor blinking outside the ImGui loop
     if (activeId == id) {
         _cursorAnimTimer += io.DeltaTime;
 
         bool cursorVisible = ImFmod(_cursorAnimTimer, 1.20f) <= 0.80f;
-        ImVec2 cursorPos = bb.Min + _cursorOffset;
+        ImVec2 cursorPos = bb.Min + _cursorVisualOffset;
         ImRect cursorRect{
             cursorPos.x,
             cursorPos.y + 1.5f,
@@ -677,23 +724,23 @@ void Ionl::TextEdit::Show() {
 }
 
 bool TextEdit::HasSelection() const {
-    return _cursorIdx == _anchor;
+    return _cursorIdx == _anchorIdx;
 }
 
 size_t TextEdit::GetSelectionBegin() const {
-    return ImMin(_cursorIdx, _anchor);
+    return ImMin(_cursorIdx, _anchorIdx);
 }
 
 size_t TextEdit::GetSelectionEnd() const {
-    return ImMax(_cursorIdx, _anchor);
+    return ImMax(_cursorIdx, _anchorIdx);
 }
 
 void TextEdit::SetSelection(size_t begin, size_t end, bool cursorAtBegin) {
     if (cursorAtBegin) {
         _cursorIdx = begin;
-        _anchor = end;
+        _anchorIdx = end;
     } else {
         _cursorIdx = end;
-        _anchor = begin;
+        _anchorIdx = begin;
     }
 }

@@ -2,6 +2,12 @@
 
 #include "imgui_internal.h"
 
+#include <algorithm>
+
+// Development/debugging helpers
+// #define IONL_SHOW_DEBUG_BOUNDING_BOXES
+#define IONL_SHOW_DEBUG_INFO
+
 using namespace std::string_view_literals;
 
 Ionl::TextStyles Ionl::gTextStyles;
@@ -149,7 +155,8 @@ void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
 }
 
 ImWchar* CalcPtrFromIdx(TextBuffer& buf, size_t index) {
-    IM_ASSERT(index >= 0 && index < (buf.bufferSize - buf.gapSize));
+    // NOTE: we allow index to be one past the end of content b/c we assume gapSize > 0 to allow cursor to be at end of a document for insertion
+    IM_ASSERT(index >= 0 && index <= (buf.bufferSize - buf.gapSize));
     if (index < buf.frontSize) {
         return buf.buffer + index;
     } else {
@@ -214,6 +221,26 @@ size_t MapBufferIndexToLogicalIndex(const TextBuffer& buf, size_t bufferIdx) {
     } else {
         return bufferIdx - buf.gapSize;
     }
+}
+
+std::pair<size_t, size_t> CalcLineWrapBoundsOfIndex(const TextEdit& te, size_t index) {
+    // First element greater than `index`
+    // NOTE: if `index` overlaps one of the bounds, it's always the lower bound `l`
+
+    auto ub = std::upper_bound(te._wrapPoints.begin(), te._wrapPoints.end(), index);
+    size_t l, u;
+    if (ub == te._wrapPoints.begin()) {
+        l = 0;
+        u = *ub;
+    } else if (ub == te._wrapPoints.end()) {
+        l = *(ub - 1);
+        u = te.buffer->GetContentSize();
+    } else {
+        l = *(ub - 1);
+        u = *ub;
+    }
+
+    return { l, u };
 }
 } // namespace
 
@@ -338,7 +365,7 @@ void Ionl::TextEdit::Show() {
     end.SetEnd();
 
     GapBufferIterator wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
-    auto WrapLine = [&]() {
+    auto CursorPosWrapLine = [&]() {
         float dy = faceFont->FontSize + linePadding;
         textPos.x = textStartX;
         textPos.y += dy;
@@ -377,7 +404,7 @@ void Ionl::TextEdit::Show() {
 
             ImU32 glyphColor = glyph->Colored ? (faceColor | ~IM_COL32_A_MASK) : faceColor;
             drawList->PrimRectUV(pos0, pos1, uv0, uv1, glyphColor);
-#ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
+#ifdef IONL_SHOW_DEBUG_BOUNDING_BOXES
             ImGui::GetForegroundDrawList()->AddRect(pos0, pos1, IM_COL32(0, 255, 255, 255));
 #endif
 
@@ -396,20 +423,28 @@ void Ionl::TextEdit::Show() {
     // TODO use gap buffer streaming, to reduce branching inside GapBufferIterator
     // TODO define line as "characters, followed by \n" so that we can have a valid index for the cursor at the end of buffer
     while (it.HasNext()) {
-        bool isLineBreak = *it == '\n';
-        bool isWordWrap = it > wrapPoint;
-        if (isLineBreak || isWordWrap) {
-            if (isWordWrap) {
+        bool isHardWrap = *it == '\n';
+        bool isSoftWrap = it > wrapPoint;
+        if (isHardWrap || isSoftWrap) {
+            if (isSoftWrap) {
                 // TODO fix position calculation: this currently assumes all glyphs are of the regular proportional variant, so for e.g. all bold text, or all code text it's broken
                 wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
+                _wrapPoints.push_back(CalcIdxFromPtr(*buffer, it.ptr));
             }
-            ++it;
+            if (isHardWrap) {
+                if (cursorPtr == it.ptr) {
+                    _cursorAssociatedFont = faceFont;
+                    _cursorVisualOffset = textPos - window->DC.CursorPos;
+                }
+
+                // Skip \n
+                ++it;
+            }
 
             // Position at current end of line
             auto oldTextPos = textPos;
             // NOTE: this updates `textPos`
-            WrapLine();
-            _wrapPoints.push_back(CalcIdxFromPtr(*buffer, it.ptr));
+            CursorPosWrapLine();
 
             // Draw the text decoration to current pos (end of line), and then "transplant" them to the next line
             if (faceDesc.underline.state) {
@@ -431,7 +466,7 @@ void Ionl::TextEdit::Show() {
                 faceDesc.strikethrough.pos = textPos;
             }
 
-            if (isLineBreak) {
+            if (isHardWrap) {
                 continue;
             }
         }
@@ -453,6 +488,7 @@ void Ionl::TextEdit::Show() {
 
             // TODO is it a better idea to create title faces, and then let the main loop handle it?
             // that way we could reduce quite a few lines of duplicated logic, especially for handling line breaks
+            // This also allows it to handle things like inline code inside a title
 
             it = oldIt;
             size_t charCount = 0;
@@ -470,7 +506,8 @@ void Ionl::TextEdit::Show() {
             size_t charsDrawn = 0;
             while (*it != '\n' && it.HasNext()) {
                 if (it > wrapPoint) {
-                    WrapLine();
+                    // TODO record wrap point
+                    CursorPosWrapLine();
                     wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, it, end, contentRegionAvail.x);
                 }
 
@@ -487,7 +524,7 @@ void Ionl::TextEdit::Show() {
             drawList->PrimUnreserve((charCount - charsDrawn) * 6, (charCount - charsDrawn) * 4);
 
             // Handle the \n character
-            WrapLine();
+            CursorPosWrapLine();
             ++it;
 
             // Recalculate wrapPoint using normal face
@@ -605,11 +642,19 @@ void Ionl::TextEdit::Show() {
         for (auto ch = oldIt; ch != it; ++ch) {
             // Handle cursor positioning
             // NOTE: we must do this before calling DrawGlyph(), because it moves textPos to the next glyph
-            if ((!_cursorAffinity && ch.ptr - 1 == cursorPtr) ||
-                (_cursorAffinity && ch.ptr == cursorPtr))
+            // NOTE: this relies on \n being processed by the loop to place hard wrapped line ends correctly
+            // TODO this places definitive cursor on the last char of the previous line, not good; we need to handle the "one after line end" case
+            // TODO handle hard line breaks
+            // TODO if we use cursorAffinity on the char before the line wrap, it will give much nicer logic in this place
+            if ((!_cursorAffinity && cursorPtr == ch.ptr) ||
+                (_cursorAffinity && cursorPtr == ch.ptr + 1))
             {
                 _cursorAssociatedFont = faceFont;
                 _cursorVisualOffset = textPos - window->DC.CursorPos;
+                if (_cursorAffinity) {
+                    auto glyph = faceFont->FindGlyph(*ch);
+                    _cursorVisualOffset.x += glyph ? glyph->AdvanceX : 0;
+                }
             }
 
             if (DrawGlyph(*ch)) {
@@ -630,7 +675,7 @@ void Ionl::TextEdit::Show() {
     }
 
     // For the last line (which doesn't end in a \n)
-    WrapLine();
+    CursorPosWrapLine();
 
     ImVec2 widgetSize(contentRegionAvail.x, totalHeight);
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + widgetSize };
@@ -655,6 +700,7 @@ void Ionl::TextEdit::Show() {
         ImGui::FocusWindow(window);
 
         // Declare our inputs
+        // TODO do we need to declare other keys like Backspace? ImGui::InputTextEx() uses them but doesn't declare
         ImGui::SetActiveIdUsingKey(ImGuiKey_LeftArrow);
         ImGui::SetActiveIdUsingKey(ImGuiKey_RightArrow);
         ImGui::SetActiveIdUsingKey(ImGuiKey_UpArrow);
@@ -665,29 +711,126 @@ void Ionl::TextEdit::Show() {
         ImGui::SetActiveIdUsingKey(ImGuiKey_End);
     }
 
-    size_t bufferLength = buffer->bufferSize - buffer->gapSize;
+    size_t bufContentSize = buffer->GetContentSize();
 
     // Process keyboard inputs
     if (activeId == id && !g.ActiveIdIsJustActivated) {
         bool isOSX = io.ConfigMacOSXBehaviors;
         bool isMovingWord = isOSX ? io.KeyAlt : io.KeyCtrl;
+        bool isShortcutKey = isOSX ? (io.KeyMods == ImGuiMod_Super) : (io.KeyMods == ImGuiMod_Ctrl);
 
-        bool leftArrow = ImGui::IsKeyPressed(ImGuiKey_LeftArrow);
-        bool rightArrow = ImGui::IsKeyPressed(ImGuiKey_RightArrow);
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+            if (_cursorIsAtWrapPoint && !_cursorAffinity) {
+                _cursorAffinity = true;
+            } else {
+                // TODO this clamp is broken with unsigned index
+                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, -1) : -1;
+                _cursorIdx = ImClamp<size_t>(_cursorIdx, 0, bufContentSize);
+                if (!io.KeyShift) _anchorIdx = _cursorIdx;
 
-        if (leftArrow) {
-            // TODO calculate affinity
-            _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, -1) : -1;
-            _cursorIdx = ImClamp<size_t>(_cursorIdx, 0, bufferLength - 1);
+                _cursorIsAtWrapPoint = std::binary_search(_wrapPoints.begin(), _wrapPoints.end(), _cursorIdx);
+                // NOTE: when we move left from a soft-wrapped point, this is necessary to get out of the affinitive state
+                _cursorAffinity = false;
+            }
+
             _cursorAnimTimer = 0.0f;
-        } else if (rightArrow) {
-            _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, +1) : +1;
-            _cursorIdx = ImClamp<size_t>(_cursorIdx, 0, bufferLength - 1);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+            if (_cursorIsAtWrapPoint && _cursorAffinity) {
+                _cursorAffinity = false;
+            } else {
+                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, +1) : +1;
+                _cursorIdx = ImClamp<size_t>(_cursorIdx, 0, bufContentSize);
+                if (!io.KeyShift) _anchorIdx = _cursorIdx;
+
+                _cursorIsAtWrapPoint = std::binary_search(_wrapPoints.begin(), _wrapPoints.end(), _cursorIdx);
+                if (_cursorIsAtWrapPoint) {
+                    _cursorAffinity = true;
+                }
+            }
             _cursorAnimTimer = 0.0f;
         } else if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
-            // TODO
+            if (isMovingWord) {
+                _cursorIdx = 0;
+                _anchorIdx = 0;
+                _cursorAffinity = false;
+                _cursorIsAtWrapPoint = false;
+            } else {
+                auto [l, u] = CalcLineWrapBoundsOfIndex(*this, _cursorIdx);
+
+                _cursorIdx = l;
+                if (!io.KeyShift) _anchorIdx = _cursorIdx;
+
+                _cursorIsAtWrapPoint = false;
+                _cursorAffinity = false;
+            }
         } else if (ImGui::IsKeyPressed(ImGuiKey_End)) {
+            if (isMovingWord) {
+                _cursorIdx = bufContentSize;
+                _anchorIdx = bufContentSize;
+                _cursorAffinity = false;
+                _cursorIsAtWrapPoint = true;
+            } else {
+                auto [l, u] = CalcLineWrapBoundsOfIndex(*this, _cursorIdx);
+
+                _cursorIdx = u;
+                if (!io.KeyShift) _anchorIdx = _cursorIdx;
+
+                _cursorIsAtWrapPoint = true;
+                bool lineIsHardWrapped = u == bufContentSize || (*buffer)[u] == '\n';
+                _cursorAffinity = !lineIsHardWrapped;
+            }
+        } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
             // TODO
+        } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            // TODO
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+            // TODO
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
+            // TODO
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            // TODO
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_X)) {
+            // Cut
+            // TODO
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_C)) {
+            // Copy
+            // TODO
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_V)) {
+            // Paste
+            // TODO
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_Z)) {
+            // Undo
+            // TODO
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_Y)) {
+            // Redo
+            // TODO
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_A)) {
+            // Select all
+            // TODO
+        }
+
+        // Process character inputs
+
+        if (io.InputQueueCharacters.Size > 0) {
+            // TODO imgui checks "input_requested_by_nav", is that necessary?
+            bool ignoreCharInputs = (io.KeyCtrl && !io.KeyAlt) || (isOSX && io.KeySuper);
+            if (!ignoreCharInputs) {
+                for (int i = 0; i < io.InputQueueCharacters.Size; ++i) {
+                    auto c = io.InputQueueCharacters[i];
+
+                    // Skips
+                    if (std::iscntrl(c)) continue;
+                    // 1. Tab/shift+tab should be handled by the text bullet logic outside for indent/dedent, we don't care
+                    // 2. If we wanted this, polling for key is better anyway
+                    if (c == '\t') continue;
+                    // TODO maybe we should reuse InputTextFilterCharacter in imgui_widgets.cpp
+
+                    // Insert character into buffer
+                    // TODO
+                }
+            }
+
+            io.InputQueueCharacters.resize(0);
         }
     }
 
@@ -716,15 +859,51 @@ void Ionl::TextEdit::Show() {
         ImGui::ClearActiveID();
     }
 
-#ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
+#ifdef IONL_SHOW_DEBUG_BOUNDING_BOXES
     auto dl = ImGui::GetForegroundDrawList();
     dl->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
     dl->AddRect(bb.Min, bb.Min + contentRegionAvail, IM_COL32(255, 0, 255, 255));
 #endif
+
+#ifdef IONL_SHOW_DEBUG_INFO
+    if (ImGui::CollapsingHeader("TextEdit debug")) {
+        ImGui::Text("_cursorIdx = %zu", _cursorIdx);
+        ImGui::Text("_anchorIdx = %zu", _cursorIdx);
+        if (HasSelection()) {
+            ImGui::Text("Selection range: [%zu,%zu)", GetSelectionBegin(), GetSelectionEnd());
+        } else {
+            ImGui::Text("Selection range: none");
+        }
+        ImGui::Text("_cursorIsAtWrapPoint = %s", _cursorIsAtWrapPoint ? "true" : "false");
+        ImGui::Text("_cursorAffinity = %s", _cursorAffinity ? "true" : "false");
+        ImGui::Text("Wrap points: ");
+        ImGui::SameLine();
+        char wrapPointText[65536];
+        char* wrapPointTextWt = wrapPointText;
+        char* wrapPointTextEnd = std::end(wrapPointText);
+        for (int i = 0; i < _wrapPoints.size(); ++i) {
+            int wp = _wrapPoints[i];
+            int bufSize = wrapPointTextEnd - wrapPointTextWt;
+            int res = snprintf(wrapPointTextWt, bufSize, i != _wrapPoints.size() - 1 ? "%d, " : "%d", wp);
+
+            if (res < 0 || res >= bufSize) {
+                // NOTE: snprintf() always null terminates buffer even if there is not enough space
+                break;
+            }
+
+            // NOTE: snprintf() return value don't count the null termiantor
+            wrapPointTextWt += res;
+        }
+        *wrapPointTextWt = '\0';
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(wrapPointText);
+        ImGui::PopTextWrapPos();
+    }
+#endif
 }
 
 bool TextEdit::HasSelection() const {
-    return _cursorIdx == _anchorIdx;
+    return _cursorIdx != _anchorIdx;
 }
 
 size_t TextEdit::GetSelectionBegin() const {
@@ -743,4 +922,9 @@ void TextEdit::SetSelection(size_t begin, size_t end, bool cursorAtBegin) {
         _cursorIdx = end;
         _anchorIdx = begin;
     }
+}
+
+void TextEdit::SetCursor(size_t cursor) {
+    _cursorIdx = cursor;
+    _anchorIdx = cursor;
 }

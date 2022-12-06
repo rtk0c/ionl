@@ -58,6 +58,12 @@ struct TextBuffer {
     ~TextBuffer();
 
     size_t GetContentSize() const { return bufferSize - gapSize; }
+    size_t GetFrontSize() const { return frontSize; }
+    size_t GetBackSize() const { return bufferSize - frontSize - gapSize; }
+    size_t GetGapSize() const { return gapSize; }
+
+    const ImWchar& operator[](size_t i) const { return i > frontSize ? buffer[i + gapSize] : buffer[i]; }
+    ImWchar& operator[](size_t i) { return const_cast<ImWchar&>(const_cast<const TextBuffer&>(*this)[i]); }
 
     std::string ExtractContent() const;
     void UpdateContent(std::string_view content);
@@ -71,6 +77,10 @@ struct TextEdit {
     /* [In] */ TextBuffer* buffer;
 
     // Generates during render loop, a list of character indices which line wraps (both soft and hard wraps)
+    // This vector should always be sorted.
+    // - hard wrap: point to the \n
+    // - soft wrap: point to the character on the next line
+    // TODO maybe we can save text properties (current face, etc.) so we can resume parsing at any wrap point, and as a result avoid reparsing/rendering the whole document every time we move the cursor
     ImVector<size_t> _wrapPoints;
 
     // TODO should we move all of these to a global shared state like ImGui::InputText()?
@@ -104,9 +114,11 @@ struct TextEdit {
     ImFont* _cursorAssociatedFont = nullptr;
     float _cursorAnimTimer = 0.0f;
 
+    // Whether the cursor is on a wrapping point (end of a soft wrapped line).
+    bool _cursorIsAtWrapPoint = false;
+
     // false: the cursor is after the wrap (next line), or that no soft wrap is applied
     // true: the cursor is before the wrap (prev line)
-    // NOTE: we don't treat \n in the buffer as an actual glyph, so this is used even on real line breaks
     bool _cursorAffinity = false;
 
     void Show();
@@ -115,6 +127,7 @@ struct TextEdit {
     size_t GetSelectionBegin() const;
     size_t GetSelectionEnd() const;
     void SetSelection(size_t begin, size_t end, bool cursorAtBegin = false);
+    void SetCursor(size_t cursor);
 };
 
 } // namespace Ionl

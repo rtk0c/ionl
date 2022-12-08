@@ -17,28 +17,31 @@ using namespace Ionl;
 
 struct GapBufferIterator {
     TextBuffer* obj;
-    ImWchar* ptr;
+    // We use signed here to avoid all the Usual Arithmetic Conversion issues, where when doing `signed + unsigned`, both operands get converted to unsigned when we expected "delta"-ing behavior
+    // Note that even though `signed = signed + unsigned` does work if both operands have the same width due to wraparound arithmetic, and the fact that the rhs is immediately converted to signed
+    // But expressions like `(signed + unsigned) > constant` breaks our intuition because the lhs stays unsigned before entering operator>
+    int64_t idx; // Buffer index
 
     explicit GapBufferIterator(TextBuffer& buffer)
         : obj{ &buffer }
-        , ptr{ buffer.buffer } {}
+        , idx{ 0 } {}
 
     void SetBegin() {
-        ptr = obj->buffer;
+        idx = 0;
     }
 
     void SetEnd() {
-        ptr = obj->buffer + obj->bufferSize;
+        idx = obj->bufferSize;
     }
 
     ImWchar& operator*() const {
-        return *ptr;
+        return obj->buffer[idx];
     }
 
     GapBufferIterator& operator++() {
-        ptr += 1;
-        if (ptr == obj->buffer + obj->frontSize) {
-            ptr += obj->gapSize;
+        idx += 1;
+        if (idx == obj->frontSize) {
+            idx += obj->gapSize;
         }
         return *this;
     }
@@ -46,20 +49,20 @@ struct GapBufferIterator {
     GapBufferIterator operator+(int64_t advance) const {
         // Assumes adding `advance` to `ptr` does not go outside of gap buffer bounds
 
-        auto gapBeginIdx = obj->frontSize;
-        auto gapEndIdx = obj->frontSize + obj->gapSize;
-        ptrdiff_t ptrIdx = ptr - obj->buffer;
+        int64_t gapBeginIdx = obj->frontSize;
+        int64_t gapEndIdx = obj->frontSize + obj->gapSize;
+        int64_t gapSize = obj->gapSize;
 
         GapBufferIterator res;
         res.obj = obj;
-        if (ptrIdx >= gapEndIdx) {
-            res.ptr = ptrIdx + advance < gapEndIdx
-                ? obj->buffer + (ptrIdx + (-obj->gapSize) + advance)
-                : obj->buffer + advance;
+        if (idx >= gapEndIdx) {
+            res.idx = idx + advance < gapEndIdx
+                ? (idx + (-gapSize) + advance)
+                : advance;
         } else {
-            res.ptr = ptrIdx + advance >= gapBeginIdx
-                ? obj->buffer + (ptrIdx + (+obj->gapSize) + advance)
-                : obj->buffer + advance;
+            res.idx = idx + advance >= gapBeginIdx
+                ? (idx + (+gapSize) + advance)
+                : advance;
         }
         return res;
     }
@@ -70,10 +73,10 @@ struct GapBufferIterator {
     }
 
     GapBufferIterator& operator--() {
-        if (ptr == obj->buffer + obj->frontSize + obj->gapSize) {
-            ptr -= obj->gapSize;
+        if (idx == obj->frontSize + obj->gapSize) {
+            idx -= obj->gapSize;
         } else {
-            ptr -= 1;
+            idx -= 1;
         }
         return *this;
     }
@@ -87,23 +90,24 @@ struct GapBufferIterator {
     }
 
     bool HasNext() const {
-        return ptr != obj->buffer + obj->bufferSize;
+        return idx != obj->bufferSize;
     }
 
     bool operator<(const GapBufferIterator& that) const {
-        return this->ptr < that.ptr;
+        return this->idx < that.idx;
     }
 
     bool operator>(const GapBufferIterator& that) const {
-        return this->ptr > that.ptr;
+        return this->idx > that.idx;
     }
 
     bool operator==(const GapBufferIterator& that) const {
-        return this->ptr == that.ptr;
+        return this->idx == that.idx;
     }
 
 private:
-    GapBufferIterator() {}
+    GapBufferIterator()
+        : obj{ nullptr }, idx{ 0 } {}
 };
 ImWchar* AllocateBuffer(size_t size) {
     return (ImWchar*)malloc(sizeof(ImWchar) * size);
@@ -162,25 +166,6 @@ void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
         oldBackSize);
 }
 
-ImWchar* CalcPtrFromIdx(TextBuffer& buf, size_t index) {
-    // NOTE: we allow index to be one past the end of content b/c we assume gapSize > 0 to allow cursor to be at end of a document for insertion
-    IM_ASSERT(index >= 0 && index <= (buf.bufferSize - buf.gapSize));
-    if (index < buf.frontSize) {
-        return buf.buffer + index;
-    } else {
-        return buf.buffer + (index + buf.frontSize + buf.gapSize);
-    }
-}
-
-size_t CalcIdxFromPtr(const TextBuffer& buf, const ImWchar* ptr) {
-    size_t bufferIdx = ptr - buf.buffer;
-    if (bufferIdx < buf.frontSize) {
-        return bufferIdx;
-    } else {
-        return bufferIdx - buf.frontSize - buf.gapSize;
-    }
-}
-
 bool IsCharAPartOfWord(ImWchar c) {
     return !std::isspace(c);
 }
@@ -209,8 +194,6 @@ int64_t CalcAdjacentWordPos(TextBuffer& buf, int64_t index, int delta) {
 
     return index;
 }
-
-// TODO these two functions are pretty much the same as CalcPtrFromIdx and CalcIdxFromPtr, clean up
 
 int64_t MapLogicalIndexToBufferIndex(const TextBuffer& buf, int64_t logicalIdx) {
     if (logicalIdx < buf.frontSize) {
@@ -307,7 +290,7 @@ namespace {
 using namespace Ionl;
 
 struct FaceTrait {
-    const ImWchar* loc = nullptr;
+    size_t loc = std::numeric_limits<size_t>::max();
     ImVec2 pos;
     bool state = false;
 };
@@ -388,7 +371,7 @@ void Ionl::TextEdit::Show() {
         totalHeight += dy;
     };
 
-    auto cursorPtr = CalcPtrFromIdx(*buffer, _cursorIdx);
+    auto bufferIndexOfCursor = MapLogicalIndexToBufferIndex(*buffer, _cursorIdx);
 
     // NOTE: pattern must be ASCII
     auto ChMatches = [&](std::string_view patternStr) {
@@ -445,10 +428,10 @@ void Ionl::TextEdit::Show() {
             if (isSoftWrap) {
                 // TODO fix position calculation: this currently assumes all glyphs are of the regular proportional variant, so for e.g. all bold text, or all code text it's broken
                 wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
-                _wrapPoints.push_back(CalcIdxFromPtr(*buffer, it.ptr));
+                _wrapPoints.push_back(MapBufferIndexToLogicalIndex(*buffer, it.idx));
             }
             if (isHardWrap) {
-                if (cursorPtr == it.ptr) {
+                if (bufferIndexOfCursor == it.idx) {
                     _cursorAssociatedFont = faceFont;
                     _cursorVisualOffset = textPos - window->DC.CursorPos;
                 }
@@ -527,7 +510,7 @@ void Ionl::TextEdit::Show() {
                     wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, it, end, contentRegionAvail.x);
                 }
 
-                if (it.ptr == cursorPtr) {
+                if (it.idx == bufferIndexOfCursor) {
                     _cursorAssociatedFont = faceFont;
                     _cursorVisualOffset = textPos - window->DC.CursorPos;
                 }
@@ -584,13 +567,13 @@ void Ionl::TextEdit::Show() {
             if (props.state) {
                 // Closing specifier
                 props.state = false;
-                props.loc = nullptr;
+                props.loc = std::numeric_limits<size_t>::max();
                 props.pos = ImVec2();
                 delayedUpdateFormat = true;
             } else {
                 // Opening specifier
                 props.state = true;
-                props.loc = it.ptr;
+                props.loc = it.idx;
                 props.pos = textPos;
                 LocateFace(faceDesc, faceFont, faceColor);
             }
@@ -662,8 +645,8 @@ void Ionl::TextEdit::Show() {
             // TODO this places definitive cursor on the last char of the previous line, not good; we need to handle the "one after line end" case
             // TODO handle hard line breaks
             // TODO if we use cursorAffinity on the char before the line wrap, it will give much nicer logic in this place
-            if ((!_cursorAffinity && cursorPtr == ch.ptr) ||
-                (_cursorAffinity && cursorPtr == ch.ptr + 1))
+            if ((!_cursorAffinity && bufferIndexOfCursor == ch.idx) ||
+                (_cursorAffinity && bufferIndexOfCursor == ch.idx + 1))
             {
                 _cursorAssociatedFont = faceFont;
                 _cursorVisualOffset = textPos - window->DC.CursorPos;

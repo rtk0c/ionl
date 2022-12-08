@@ -81,7 +81,7 @@ struct TextEdit {
     // - hard wrap: point to the \n
     // - soft wrap: point to the character on the next line
     // TODO maybe we can save text properties (current face, etc.) so we can resume parsing at any wrap point, and as a result avoid reparsing/rendering the whole document every time we move the cursor
-    ImVector<size_t> _wrapPoints;
+    ImVector<int64_t> _wrapPoints;
 
     // TODO should we move all of these to a global shared state like ImGui::InputText()?
     //   b/c there can only be one active text edit at any given time anyways, so this could simply this widget down to Ionl::TextEdit(GapBuffer& document);
@@ -105,8 +105,8 @@ struct TextEdit {
     // As such:
     // - if _cursorIdx == _anchorIdx, there is no selection
 
-    size_t _cursorIdx = 0;
-    size_t _anchorIdx = 0;
+    int64_t _cursorIdx = 0;
+    int64_t _anchorIdx = 0;
 
     // Offset of the glyph that the cursor is hovering, from draw origin
     ImVec2 _cursorVisualOffset;
@@ -124,10 +124,10 @@ struct TextEdit {
     void Show();
 
     bool HasSelection() const;
-    size_t GetSelectionBegin() const;
-    size_t GetSelectionEnd() const;
-    void SetSelection(size_t begin, size_t end, bool cursorAtBegin = false);
-    void SetCursor(size_t cursor);
+    int64_t GetSelectionBegin() const;
+    int64_t GetSelectionEnd() const;
+    void SetSelection(int64_t begin, int64_t end, bool cursorAtBegin = false);
+    void SetCursor(int64_t cursor);
 };
 
 } // namespace Ionl

@@ -19,7 +19,7 @@ struct GapBufferIterator {
     TextBuffer* obj;
     ImWchar* ptr;
 
-    GapBufferIterator(TextBuffer& buffer)
+    explicit GapBufferIterator(TextBuffer& buffer)
         : obj{ &buffer }
         , ptr{ buffer.buffer } {}
 
@@ -31,7 +31,7 @@ struct GapBufferIterator {
         ptr = obj->buffer + obj->bufferSize;
     }
 
-    ImWchar& operator*() {
+    ImWchar& operator*() const {
         return *ptr;
     }
 
@@ -43,27 +43,29 @@ struct GapBufferIterator {
         return *this;
     }
 
-    GapBufferIterator operator+(int n) const {
-        ImWchar* backBegin = obj->buffer + obj->frontSize;
-        ptrdiff_t dist = backBegin - ptr;
-        GapBufferIterator it;
-        it.obj = obj;
-        if (dist <= n) {
-            it.ptr = backBegin + (n - dist);
+    GapBufferIterator operator+(int64_t advance) const {
+        // Assumes adding `advance` to `ptr` does not go outside of gap buffer bounds
+
+        auto gapBeginIdx = obj->frontSize;
+        auto gapEndIdx = obj->frontSize + obj->gapSize;
+        ptrdiff_t ptrIdx = ptr - obj->buffer;
+
+        GapBufferIterator res;
+        res.obj = obj;
+        if (ptrIdx >= gapEndIdx) {
+            res.ptr = ptrIdx + advance < gapEndIdx
+                ? obj->buffer + (ptrIdx + (-obj->gapSize) + advance)
+                : obj->buffer + advance;
         } else {
-            it.ptr = ptr + n;
+            res.ptr = ptrIdx + advance >= gapBeginIdx
+                ? obj->buffer + (ptrIdx + (+obj->gapSize) + advance)
+                : obj->buffer + advance;
         }
-        return it;
+        return res;
     }
 
-    GapBufferIterator& operator+=(int n) {
-        ImWchar* backBegin = obj->buffer + obj->frontSize;
-        ptrdiff_t dist = backBegin - ptr;
-        if (dist <= n) {
-            ptr = backBegin + (n - dist);
-        } else {
-            ptr += n;
-        }
+    GapBufferIterator& operator+=(int64_t advance) {
+        *this = *this + advance;
         return *this;
     }
 
@@ -76,7 +78,13 @@ struct GapBufferIterator {
         return *this;
     }
 
-    // TODO operator-=
+    GapBufferIterator operator-(int64_t advance) const {
+        return *this + (-advance);
+    }
+
+    GapBufferIterator& operator-=(int64_t advance) {
+        return *this += (-advance);
+    }
 
     bool HasNext() const {
         return ptr != obj->buffer + obj->bufferSize;
@@ -192,7 +200,7 @@ bool IsWordBreaking(ImWchar a, ImWchar b) {
 //
 // # Notes on terminology
 // "move towards" means to adjust the index forwards or backwards to the desired location, depending on `delta` being positive or negative.
-size_t CalcAdjacentWordPos(TextBuffer& buf, size_t index, int delta) {
+int64_t CalcAdjacentWordPos(TextBuffer& buf, int64_t index, int delta) {
     GapBufferIterator it(buf);
     it += index;
 
@@ -204,26 +212,26 @@ size_t CalcAdjacentWordPos(TextBuffer& buf, size_t index, int delta) {
 
 // TODO these two functions are pretty much the same as CalcPtrFromIdx and CalcIdxFromPtr, clean up
 
-size_t MapLogicalIndexToBufferIndex(const TextBuffer& buf, size_t logicalIdx) {
+int64_t MapLogicalIndexToBufferIndex(const TextBuffer& buf, int64_t logicalIdx) {
     if (logicalIdx < buf.frontSize) {
         return logicalIdx;
     } else {
-        return logicalIdx + buf.gapSize;
+        return logicalIdx + (int64_t)buf.gapSize;
     }
 }
 
-// If the buffer index does not point to a valid logical location (i.e. it points to somewhere in the gap), std::numeric_limits<size_t>::max() is returned
-size_t MapBufferIndexToLogicalIndex(const TextBuffer& buf, size_t bufferIdx) {
+// If the buffer index does not point to a valid logical location (i.e. it points to somewhere in the gap), -1 is returned
+int64_t MapBufferIndexToLogicalIndex(const TextBuffer& buf, int64_t bufferIdx) {
     if (bufferIdx < buf.frontSize) {
         return bufferIdx;
     } else if (/* bufferIdx >= buf.frontSize && */ bufferIdx < (buf.frontSize + buf.gapSize)) {
-        return std::numeric_limits<size_t>::max();
+        return -1;
     } else {
-        return bufferIdx - buf.gapSize;
+        return bufferIdx - (int64_t)buf.gapSize;
     }
 }
 
-std::pair<size_t, size_t> CalcLineWrapBoundsOfIndex(const TextEdit& te, size_t index) {
+std::pair<int64_t, int64_t> CalcLineWrapBoundsOfIndex(const TextEdit& te, int64_t index) {
     // First element greater than `index`
     // NOTE: if `index` overlaps one of the bounds, it's always the lower bound `l`
 
@@ -250,7 +258,12 @@ Ionl::TextBuffer::TextBuffer()
     , frontSize{ 0 }
     , gapSize{ 256 } {}
 
-Ionl::TextBuffer::TextBuffer(std::string_view content) {
+Ionl::TextBuffer::TextBuffer(std::string_view content)
+    // NOTE: these set of parameters are technically invalid, but they get immediately overridden by UpdateContent() which doesn't care
+    : buffer{ nullptr }
+    , bufferSize{ 0 }
+    , frontSize{ 0 }
+    , gapSize{ 0 } {
     UpdateContent(content);
 }
 
@@ -276,8 +289,11 @@ std::string Ionl::TextBuffer::ExtractContent() const {
 void Ionl::TextBuffer::UpdateContent(std::string_view content) {
     auto strBegin = &*content.begin();
     auto strEnd = &*content.end();
-    bufferSize = ImTextCountCharsFromUtf8(strBegin, strEnd);
-    buffer = AllocateBuffer(bufferSize);
+    auto newBufferSize = ImTextCountCharsFromUtf8(strBegin, strEnd);
+    if (bufferSize < newBufferSize) {
+        ReallocateBuffer(buffer, newBufferSize);
+    }
+    bufferSize = newBufferSize;
     frontSize = bufferSize;
     gapSize = 0;
     ImTextStrFromUtf8NoNullTerminate(buffer, bufferSize, strBegin, strEnd);
@@ -711,7 +727,7 @@ void Ionl::TextEdit::Show() {
         ImGui::SetActiveIdUsingKey(ImGuiKey_End);
     }
 
-    size_t bufContentSize = buffer->GetContentSize();
+    int64_t bufContentSize = buffer->GetContentSize();
 
     // Process keyboard inputs
     if (activeId == id && !g.ActiveIdIsJustActivated) {
@@ -723,9 +739,8 @@ void Ionl::TextEdit::Show() {
             if (_cursorIsAtWrapPoint && !_cursorAffinity) {
                 _cursorAffinity = true;
             } else {
-                // TODO this clamp is broken with unsigned index
                 _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, -1) : -1;
-                _cursorIdx = ImClamp<size_t>(_cursorIdx, 0, bufContentSize);
+                _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
 
                 _cursorIsAtWrapPoint = std::binary_search(_wrapPoints.begin(), _wrapPoints.end(), _cursorIdx);
@@ -739,7 +754,7 @@ void Ionl::TextEdit::Show() {
                 _cursorAffinity = false;
             } else {
                 _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, +1) : +1;
-                _cursorIdx = ImClamp<size_t>(_cursorIdx, 0, bufContentSize);
+                _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
 
                 _cursorIsAtWrapPoint = std::binary_search(_wrapPoints.begin(), _wrapPoints.end(), _cursorIdx);
@@ -906,15 +921,15 @@ bool TextEdit::HasSelection() const {
     return _cursorIdx != _anchorIdx;
 }
 
-size_t TextEdit::GetSelectionBegin() const {
+int64_t TextEdit::GetSelectionBegin() const {
     return ImMin(_cursorIdx, _anchorIdx);
 }
 
-size_t TextEdit::GetSelectionEnd() const {
+int64_t TextEdit::GetSelectionEnd() const {
     return ImMax(_cursorIdx, _anchorIdx);
 }
 
-void TextEdit::SetSelection(size_t begin, size_t end, bool cursorAtBegin) {
+void TextEdit::SetSelection(int64_t begin, int64_t end, bool cursorAtBegin) {
     if (cursorAtBegin) {
         _cursorIdx = begin;
         _anchorIdx = end;
@@ -924,7 +939,7 @@ void TextEdit::SetSelection(size_t begin, size_t end, bool cursorAtBegin) {
     }
 }
 
-void TextEdit::SetCursor(size_t cursor) {
+void TextEdit::SetCursor(int64_t cursor) {
     _cursorIdx = cursor;
     _anchorIdx = cursor;
 }

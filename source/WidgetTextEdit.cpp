@@ -3,6 +3,8 @@
 #include "imgui_internal.h"
 
 #include <algorithm>
+#include <span>
+#include <utility>
 
 // Development/debugging helpers
 // #define IONL_SHOW_DEBUG_BOUNDING_BOXES
@@ -57,12 +59,12 @@ struct GapBufferIterator {
         res.obj = obj;
         if (idx >= gapEndIdx) {
             res.idx = idx + advance < gapEndIdx
-                ? (idx + (-gapSize) + advance)
-                : advance;
+                ? idx + (-gapSize) + advance
+                : idx + advance;
         } else {
             res.idx = idx + advance >= gapBeginIdx
-                ? (idx + (+gapSize) + advance)
-                : advance;
+                ? idx + (+gapSize) + advance
+                : idx + advance;
         }
         return res;
     }
@@ -166,6 +168,241 @@ void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
         oldBackSize);
 }
 
+struct TextRun {
+    size_t begin;
+    size_t end;
+
+    // Face variants
+    bool isMonospace;
+    bool isBold;
+    bool isItalic;
+    // Decorations
+    bool isUnderline;
+    bool isStrikethrough;
+};
+
+std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
+    std::vector<TextRun> outTextRuns;
+
+    using FormatFlagPtr = bool TextRun::*;
+    struct ControlSequence {
+        size_t begin = 0;
+        size_t end = 0;
+        std::string_view pattern = {};
+        FormatFlagPtr patternFlag = nullptr;
+        bool hasClosingControlSeq = false;
+    };
+    std::vector<ControlSequence> seenControlSeqs;
+    bool isEscaping = false;
+
+    // The characters inside the parser's processing area (for size N, basically N-1 lookbehind chars + 1 current char)
+    constexpr size_t kVisionSize = 3;
+    ImWchar visionBuffer[kVisionSize] = {};
+
+    auto visionBufferMatches = [&](std::string_view pattern) {
+        auto needle = pattern.rbegin();
+        auto haystack = std::rbegin(visionBuffer);
+        while (true) {
+            // Matched the whole pattern
+            if (needle == pattern.rend()) return true;
+            // Reached end of input before matching the whole pattern
+            if (haystack == std::rend(visionBuffer)) return false;
+
+            if (*needle != *haystack) {
+                return false;
+            }
+            ++needle;
+            ++haystack;
+        }
+    };
+
+    // Insert a single TextRun into `outTextRuns`
+    auto outputTextRun = [&](TextRun run) {
+        auto gapBegin = source.frontSize;
+        auto gapEnd = source.frontSize + source.gapSize;
+        if (run.begin < gapBegin && run.end >= gapEnd) {
+            // TextRun spans over the gap, we need to split it
+            TextRun& frontRun = run;
+            TextRun backRun = run;
+
+            /* frontRun.begin; */ // Remain unchanged
+            frontRun.end = gapBegin;
+            backRun.begin = gapEnd;
+            /* backRun.end; */ // Remain unchanged
+
+            outTextRuns.push_back(std::move(frontRun));
+            outTextRuns.push_back(std::move(backRun));
+        } else {
+            outTextRuns.push_back(std::move(run));
+        }
+    };
+
+    // Insert all TextRun's represented inside `seenControlSeqs` into `outTextRuns`
+    auto outputAllMatchedTextRuns = [&]() {
+        // We assume that all elements appear with monotonically increasing `ControlSequence::begin`,
+        // which should be maintained by the scanning logic below
+
+        // TODO this could probably be much more optimized, not allocating memory or sharing a preallocated chunk
+
+        struct ToggleOp {
+            FormatFlagPtr flag;
+            size_t textLocation; // Logical index into text buffer; this is used just as a sorting number
+        };
+        std::vector<ToggleOp> ops;
+
+        for (const auto& cs : seenControlSeqs) {
+            if (cs.hasClosingControlSeq) {
+                ops.push_back({ cs.patternFlag, cs.begin });
+                ops.push_back({ cs.patternFlag, cs.end });
+            }
+        }
+
+        std::sort(ops.begin(), ops.end(), [](const ToggleOp& a, const ToggleOp& b) { return a.textLocation < b.textLocation; });
+
+        TextRun tr{};
+        for (const auto& op : ops) {
+            /* tr.begin; */ // Set by previous loop, or started with 0
+            tr.end = op.textLocation;
+
+            bool& flag = tr.*(op.flag);
+            flag = !flag;
+
+            if (tr.begin == tr.end) {
+                // This op overlaps with the previous op, we only need to set the formatting flag without outputting a TextRun
+                continue;
+            }
+
+            outputTextRun(tr);
+
+            tr.begin = tr.end;
+        }
+    };
+
+    struct {
+        size_t offset;
+        size_t length;
+    } sourceSegments[] = {
+        { 0, source.GetFrontSize() },
+        { source.frontSize + source.gapSize, source.GetBackSize() },
+    };
+    for (const auto& sourceSegment : sourceSegments) {
+        size_t idx = sourceSegment.offset;
+        size_t idxEnd = sourceSegment.offset + sourceSegment.length;
+        while (idx < idxEnd) {
+            auto cc = source.buffer[idx]; // "Current Char"
+            std::shift_left(std::begin(visionBuffer), std::end(visionBuffer), 1);
+            visionBuffer[kVisionSize - 1] = cc;
+
+            // Performs control sequence matching
+            // Returns whether caller should try match the next candidate.
+            auto doMatching = [&](std::string_view pattern, FormatFlagPtr patternFlag) -> bool {
+                // Case: no match (try next candidate)
+                if (!visionBufferMatches(pattern)) {
+                    return false;
+                }
+
+                // Case: matches but escaped; treat as normal text
+                if (isEscaping) {
+                    isEscaping = false;
+
+                    idx += pattern.size();
+                    return true;
+                }
+
+                // Case: matches and valid
+                constexpr auto kInvalidIdx = std::numeric_limits<size_t>::max();
+                size_t lastSeenIdx = kInvalidIdx;
+                for (auto it = seenControlSeqs.rbegin(); it != seenControlSeqs.rend(); ++it) {
+                    if (it->pattern == pattern) {
+                        lastSeenIdx = std::distance(seenControlSeqs.rbegin(), it);
+                        break;
+                    }
+                }
+
+                if (lastSeenIdx == kInvalidIdx) {
+                    // Opening control sequence
+                    seenControlSeqs.push_back(ControlSequence{
+                        .begin = idx,
+                        .pattern = pattern,
+                        .patternFlag = patternFlag,
+                    });
+                } else {
+                    // Closing control sequence
+                    // Remove the record of this control seq (and everything after because they can't possibly be
+                    // matched, since we disallow intermingled syntax like *foo_bar*_)
+                    seenControlSeqs.resize(lastSeenIdx + 1);
+
+                    auto& lastSeen = seenControlSeqs[lastSeenIdx];
+                    lastSeen.end = idx + pattern.size();
+                    lastSeen.hasClosingControlSeq = true;
+
+                    // If we matched the very first control sequence, i.e. going back to unformatted text now
+                    if (lastSeenIdx == 0) {
+                        outputAllMatchedTextRuns();
+                        seenControlSeqs.clear();
+                    }
+                }
+                idx += pattern.size();
+                return true;
+            };
+            auto doMatchings = [&](std::initializer_list<std::string_view> patterns, FormatFlagPtr patternFlag) {
+                for (const auto& pattern : patterns) {
+                    if (doMatching(pattern, patternFlag)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            if (doMatching("**"sv, &TextRun::isBold) ||
+                doMatching("__"sv, &TextRun::isUnderline) ||
+                doMatching("~~"sv, &TextRun::isStrikethrough) ||
+                doMatchings({ "*"sv, "_"sv }, &TextRun::isItalic))
+            {
+                // No-op, handled inside the helper
+            } else {
+                // Set escaping state for the next character
+                // If this is a '\', and it's being escaped, treat this just as plain text; otherwise escape the next character
+                // If this is anything else, this condition will evaluate to false
+                isEscaping = cc == '\\' && !isEscaping;
+                ++idx;
+            }
+        }
+    }
+
+    return outTextRuns;
+}
+
+#ifdef IONL_SHOW_DEBUG_INFO
+void ShowDebugTextRun(std::string_view source, const TextRun& tr) {
+    auto substr = source.substr(tr.begin, tr.end - tr.begin);
+    ImGui::Text("Segment: [%zu,%zu); %c%c%c%c%c",
+        tr.begin,
+        tr.end,
+        tr.isBold ? 'b' : '-',
+        tr.isItalic ? 'i' : '-',
+        tr.isUnderline ? 'u' : '-',
+        tr.isStrikethrough ? 's' : '-',
+        tr.isMonospace ? 'm' : '-');
+    ImGui::Indent();
+    auto window = ImGui::GetCurrentWindowRead();
+    auto ptTopLeft = window->DC.CursorPos;
+    ImGui::Text("%.*s", (int)substr.size(), substr.begin());
+    auto tpBottomLeft = window->DC.CursorPos;
+    ImGui::Unindent();
+    ImGui::GetWindowDrawList()->AddRect(ptTopLeft, ImVec2(ImGui::GetContentRegionAvail().x, tpBottomLeft.y), IM_COL32(255, 255, 0, 255));
+}
+
+void ShowDebugTextRuns(std::string_view source, std::span<const TextRun> textRuns) {
+    ImGui::Text("Showing %zu TextRun's:", textRuns.size());
+    for (size_t i = 0; i < textRuns.size(); ++i) {
+        ImGui::Text("[%zu]", i);
+        ImGui::SameLine();
+        ShowDebugTextRun(source, textRuns[i]);
+    }
+}
+#endif
+
 bool IsCharAPartOfWord(ImWchar c) {
     return !std::isspace(c);
 }
@@ -214,7 +451,7 @@ int64_t MapBufferIndexToLogicalIndex(const TextBuffer& buf, int64_t bufferIdx) {
     }
 }
 
-std::pair<int64_t, int64_t> CalcLineWrapBoundsOfIndex(const TextEdit& te, int64_t index) {
+std::pair<int64_t, int64_t> FindLineWrapBoundsForIndex(const TextEdit& te, int64_t index) {
     // First element greater than `index`
     // NOTE: if `index` overlaps one of the bounds, it's always the lower bound `l`
 
@@ -753,7 +990,7 @@ void Ionl::TextEdit::Show() {
                 _cursorAffinity = false;
                 _cursorIsAtWrapPoint = false;
             } else {
-                auto [l, u] = CalcLineWrapBoundsOfIndex(*this, _cursorIdx);
+                auto [l, u] = FindLineWrapBoundsForIndex(*this, _cursorIdx);
 
                 _cursorIdx = l;
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
@@ -768,7 +1005,7 @@ void Ionl::TextEdit::Show() {
                 _cursorAffinity = false;
                 _cursorIsAtWrapPoint = true;
             } else {
-                auto [l, u] = CalcLineWrapBoundsOfIndex(*this, _cursorIdx);
+                auto [l, u] = FindLineWrapBoundsForIndex(*this, _cursorIdx);
 
                 _cursorIdx = u;
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;

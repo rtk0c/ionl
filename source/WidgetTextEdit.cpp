@@ -115,7 +115,7 @@ ImWchar* AllocateBuffer(size_t size) {
     return (ImWchar*)malloc(sizeof(ImWchar) * size);
 }
 void ReallocateBuffer(ImWchar*& oldBuffer, size_t newSize) {
-    oldBuffer = (ImWchar*)realloc(oldBuffer, newSize);
+    oldBuffer = (ImWchar*)realloc(oldBuffer, sizeof(ImWchar) * newSize);
 }
 
 void MoveGap(TextBuffer& buf, size_t newIdx) {
@@ -509,13 +509,17 @@ std::string Ionl::TextBuffer::ExtractContent() const {
 void Ionl::TextBuffer::UpdateContent(std::string_view content) {
     auto strBegin = &*content.begin();
     auto strEnd = &*content.end();
-    auto newBufferSize = ImTextCountCharsFromUtf8(strBegin, strEnd);
-    if (bufferSize < newBufferSize) {
-        ReallocateBuffer(buffer, newBufferSize);
+    auto minBufferSize = ImTextCountCharsFromUtf8(strBegin, strEnd);
+    if (bufferSize < minBufferSize) {
+        bufferSize = minBufferSize;
+        frontSize = minBufferSize;
+        gapSize = 0;
+        ReallocateBuffer(buffer, minBufferSize);
+    } else {
+        // If new string size is smaller than our current buffer, we keep the buffer and simply put new data into it
+        frontSize = minBufferSize;
+        gapSize = bufferSize - minBufferSize;
     }
-    bufferSize = newBufferSize;
-    frontSize = bufferSize;
-    gapSize = 0;
     ImTextStrFromUtf8NoNullTerminate(buffer, bufferSize, strBegin, strEnd);
 }
 

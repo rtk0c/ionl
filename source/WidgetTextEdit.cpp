@@ -8,9 +8,9 @@
 
 // Development/debugging helpers
 // #define IONL_SHOW_DEBUG_BOUNDING_BOXES
-#define IONL_SHOW_DEBUG_INFO
+// #define IONL_SHOW_DEBUG_INFO
 
-using namespace std::string_view_literals;
+using namespace std::literals;
 
 Ionl::TextStyles Ionl::gTextStyles;
 
@@ -1141,19 +1141,19 @@ void Ionl::TextEdit::Show() {
 #endif
 }
 
-bool TextEdit::HasSelection() const {
+bool Ionl::TextEdit::HasSelection() const {
     return _cursorIdx != _anchorIdx;
 }
 
-int64_t TextEdit::GetSelectionBegin() const {
+int64_t Ionl::TextEdit::GetSelectionBegin() const {
     return ImMin(_cursorIdx, _anchorIdx);
 }
 
-int64_t TextEdit::GetSelectionEnd() const {
+int64_t Ionl::TextEdit::GetSelectionEnd() const {
     return ImMax(_cursorIdx, _anchorIdx);
 }
 
-void TextEdit::SetSelection(int64_t begin, int64_t end, bool cursorAtBegin) {
+void Ionl::TextEdit::SetSelection(int64_t begin, int64_t end, bool cursorAtBegin) {
     if (cursorAtBegin) {
         _cursorIdx = begin;
         _anchorIdx = end;
@@ -1163,7 +1163,7 @@ void TextEdit::SetSelection(int64_t begin, int64_t end, bool cursorAtBegin) {
     }
 }
 
-void TextEdit::SetCursor(int64_t cursor) {
+void Ionl::TextEdit::SetCursor(int64_t cursor) {
     _cursorIdx = cursor;
     _anchorIdx = cursor;
 }

@@ -390,6 +390,10 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
+    // Enable the default font for debugging overlays
+    // TODO do we want to include this only in debug builds?
+    io.Fonts->AddFontDefault();
+
     // TODO proper discovery code
     float fontSize = 18.0f;
     gTextStyles.faceFonts[MF_Proportional] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());

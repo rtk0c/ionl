@@ -49,18 +49,27 @@ extern TextStyles gTextStyles;
 
 struct TextBuffer {
     ImWchar* buffer;
-    size_t bufferSize;
-    size_t frontSize;
-    size_t gapSize;
+    int64_t bufferSize;
+    int64_t frontSize;
+    int64_t gapSize;
 
     TextBuffer();
     TextBuffer(std::string_view content);
     ~TextBuffer();
 
-    size_t GetContentSize() const { return bufferSize - gapSize; }
-    size_t GetFrontSize() const { return frontSize; }
-    size_t GetBackSize() const { return bufferSize - frontSize - gapSize; }
-    size_t GetGapSize() const { return gapSize; }
+    int64_t GetContentSize() const { return bufferSize - gapSize; }
+
+    int64_t GetFrontBegin() const { return 0; }
+    int64_t GetFrontEnd() const { return GetGapBegin(); }
+    int64_t GetFrontSize() const { return GetFrontEnd() - GetFrontBegin(); }
+
+    int64_t GetGapBegin() const { return frontSize; }
+    int64_t GetGapEnd() const { return GetBackBegin(); }
+    int64_t GetGapSize() const { return GetGapEnd() - GetGapBegin(); }
+
+    int64_t GetBackBegin() const { return frontSize + gapSize; }
+    int64_t GetBackEnd() const { return bufferSize; }
+    int64_t GetBackSize() const { return GetBackEnd() - GetBackBegin(); }
 
     const ImWchar& operator[](size_t i) const { return i > frontSize ? buffer[i + gapSize] : buffer[i]; }
     ImWchar& operator[](size_t i) { return const_cast<ImWchar&>(const_cast<const TextBuffer&>(*this)[i]); }

@@ -3,6 +3,7 @@
 #include "imgui_internal.h"
 
 #include <algorithm>
+#include <cassert>
 #include <span>
 #include <utility>
 
@@ -16,6 +17,41 @@ Ionl::TextStyles Ionl::gTextStyles;
 
 namespace {
 using namespace Ionl;
+
+int64_t MapLogicalIndexToBufferIndex(const TextBuffer& buffer, int64_t logicalIdx) {
+    if (logicalIdx < buffer.frontSize) {
+        return logicalIdx;
+    } else {
+        return logicalIdx + buffer.gapSize;
+    }
+}
+
+// If the buffer index does not point to a valid logical location (i.e. it points to somewhere in the gap), -1 is returned
+int64_t MapBufferIndexToLogicalIndex(const TextBuffer& buffer, int64_t bufferIdx) {
+    if (bufferIdx < buffer.frontSize) {
+        return bufferIdx;
+    } else if (/* bufferIdx >= buffer.frontSize && */ bufferIdx < (buffer.frontSize + buffer.gapSize)) {
+        return -1;
+    } else {
+        return bufferIdx - buffer.gapSize;
+    }
+}
+
+int64_t AdjustBufferIndex(const TextBuffer& buffer, int64_t /*buffer index*/ idx, int64_t delta) {
+    int64_t gapBeginIdx = buffer.frontSize;
+    int64_t gapEndIdx = buffer.frontSize + buffer.gapSize;
+    int64_t gapSize = buffer.gapSize;
+
+    if (idx >= gapEndIdx) {
+        return idx + delta < gapEndIdx
+            ? idx + (-gapSize) + delta
+            : idx + delta;
+    } else {
+        return idx + delta >= gapBeginIdx
+            ? idx + (+gapSize) + delta
+            : idx + delta;
+    }
+}
 
 struct GapBufferIterator {
     TextBuffer* obj;
@@ -57,15 +93,7 @@ struct GapBufferIterator {
 
         GapBufferIterator res;
         res.obj = obj;
-        if (idx >= gapEndIdx) {
-            res.idx = idx + advance < gapEndIdx
-                ? idx + (-gapSize) + advance
-                : idx + advance;
-        } else {
-            res.idx = idx + advance >= gapBeginIdx
-                ? idx + (+gapSize) + advance
-                : idx + advance;
-        }
+        res.idx = AdjustBufferIndex(*obj, idx, advance);
         return res;
     }
 
@@ -169,8 +197,8 @@ void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
 }
 
 struct TextRun {
-    size_t begin;
-    size_t end;
+    int64_t begin;
+    int64_t end;
 
     // Face variants
     bool isMonospace;
@@ -186,27 +214,28 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
 
     using FormatFlagPtr = bool TextRun::*;
     struct ControlSequence {
-        size_t begin = 0;
-        size_t end = 0;
+        int64_t begin = 0;
+        int64_t end = 0;
         std::string_view pattern = {};
         FormatFlagPtr patternFlag = nullptr;
-        bool hasClosingControlSeq = false;
+
+        bool HasClosingControlSeq() const { return end != 0; }
     };
     std::vector<ControlSequence> seenControlSeqs;
     bool isEscaping = false;
 
-    // The characters inside the parser's processing area (for size N, basically N-1 lookbehind chars + 1 current char)
+    // The characters inside the parser's processing area (for size N, basically 1 current char + N-1 lookbehind chars)
     constexpr size_t kVisionSize = 3;
     ImWchar visionBuffer[kVisionSize] = {};
 
     auto visionBufferMatches = [&](std::string_view pattern) {
-        auto needle = pattern.rbegin();
-        auto haystack = std::rbegin(visionBuffer);
+        auto needle = pattern.begin();
+        auto haystack = std::begin(visionBuffer);
         while (true) {
             // Matched the whole pattern
-            if (needle == pattern.rend()) return true;
+            if (needle == pattern.end()) return true;
             // Reached end of input before matching the whole pattern
-            if (haystack == std::rend(visionBuffer)) return false;
+            if (haystack == std::end(visionBuffer)) return false;
 
             if (*needle != *haystack) {
                 return false;
@@ -220,7 +249,7 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
     auto outputTextRun = [&](TextRun run) {
         auto gapBegin = source.frontSize;
         auto gapEnd = source.frontSize + source.gapSize;
-        if (run.begin < gapBegin && run.end >= gapEnd) {
+        if (run.begin < gapBegin && run.end > gapEnd) {
             // TextRun spans over the gap, we need to split it
             TextRun& frontRun = run;
             TextRun backRun = run;
@@ -246,12 +275,12 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
 
         struct ToggleOp {
             FormatFlagPtr flag;
-            size_t textLocation; // Logical index into text buffer; this is used just as a sorting number
+            int64_t textLocation; // Logical index into text buffer; this is used just as a sorting number
         };
         std::vector<ToggleOp> ops;
 
         for (const auto& cs : seenControlSeqs) {
-            if (cs.hasClosingControlSeq) {
+            if (cs.HasClosingControlSeq()) {
                 ops.push_back({ cs.patternFlag, cs.begin });
                 ops.push_back({ cs.patternFlag, cs.end });
             }
@@ -260,9 +289,15 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
         std::sort(ops.begin(), ops.end(), [](const ToggleOp& a, const ToggleOp& b) { return a.textLocation < b.textLocation; });
 
         TextRun tr{};
+        // Continue from the previous text run (covering unformatted text between this and last "stack" of formatted text), if there is one
+        if (!outTextRuns.empty()) {
+            tr.begin = outTextRuns.back().end;
+        }
         for (const auto& op : ops) {
-            /* tr.begin; */ // Set by previous loop, or started with 0
+            /* tr.begin; */ // Set by previous iteration or starting value
             tr.end = op.textLocation;
+
+            outputTextRun(tr);
 
             bool& flag = tr.*(op.flag);
             flag = !flag;
@@ -272,30 +307,49 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                 continue;
             }
 
-            outputTextRun(tr);
-
             tr.begin = tr.end;
         }
     };
 
-    struct {
-        size_t offset;
-        size_t length;
-    } sourceSegments[] = {
-        { 0, source.GetFrontSize() },
-        { source.frontSize + source.gapSize, source.GetBackSize() },
+    // The parser operates with two indices: the "head" index points to the current character being parsed, and the "reader" index ponts to the character coming into the lookahead buffer.
+    // The buffer streaming mechanism operates on "reader", advancing to the next segment when the end of the current one is reached.
+    // "head" is not stored, but calculated on the fly when it's needed.
+    // When the parser initiates, "reader" is advanced (thus filling the lookahead buffer) until "head" reaches 0 (points to the first valid character), or until "reader" reaches end of the input buffer.
+
+    std::pair<int64_t, int64_t> sourceSegments[] = {
+        { source.GetFrontBegin(), source.GetFrontSize() },
+        { source.GetBackBegin(), source.GetBackSize() },
+        // The dummy segment at the very end for "head" to advance until the very end of source buffer
+        { source.GetBackEnd(), kVisionSize - 1 },
     };
-    for (const auto& sourceSegment : sourceSegments) {
-        size_t idx = sourceSegment.offset;
-        size_t idxEnd = sourceSegment.offset + sourceSegment.length;
-        while (idx < idxEnd) {
-            auto cc = source.buffer[idx]; // "Current Char"
+    int skipCount = 0;
+    for (auto it = std::begin(sourceSegments); it != std::end(sourceSegments); ++it) {
+        const auto& sourceSegment = *it;
+        bool isLastSourceSegment = it + 1 == std::end(sourceSegments);
+
+        int64_t segmentBegin = sourceSegment.first;
+        int64_t segmentEnd = sourceSegment.first + sourceSegment.second;
+
+        int64_t reader = segmentBegin;
+        while (reader < segmentEnd) {
             std::shift_left(std::begin(visionBuffer), std::end(visionBuffer), 1);
-            visionBuffer[kVisionSize - 1] = cc;
+            if (!isLastSourceSegment) {
+                visionBuffer[kVisionSize - 1] = source.buffer[reader];
+            } else {
+                visionBuffer[kVisionSize - 1] = '\0';
+            }
+            reader += 1;
+
+            if (skipCount > 0) {
+                skipCount -= 1;
+                continue;
+            }
 
             // Performs control sequence matching
             // Returns whether caller should try match the next candidate.
             auto doMatching = [&](std::string_view pattern, FormatFlagPtr patternFlag) -> bool {
+                assert(!pattern.empty());
+
                 // Case: no match (try next candidate)
                 if (!visionBufferMatches(pattern)) {
                     return false;
@@ -305,7 +359,7 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                 if (isEscaping) {
                     isEscaping = false;
 
-                    idx += pattern.size();
+                    skipCount = pattern.size() - 1;
                     return true;
                 }
 
@@ -313,8 +367,9 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                 constexpr auto kInvalidIdx = std::numeric_limits<size_t>::max();
                 size_t lastSeenIdx = kInvalidIdx;
                 for (auto it = seenControlSeqs.rbegin(); it != seenControlSeqs.rend(); ++it) {
-                    if (it->pattern == pattern) {
-                        lastSeenIdx = std::distance(seenControlSeqs.rbegin(), it);
+                    if (it->pattern == pattern && !it->HasClosingControlSeq()) {
+                        // https://stackoverflow.com/a/24998000
+                        lastSeenIdx = std::distance(seenControlSeqs.begin(), it.base()) - 1;
                         break;
                     }
                 }
@@ -322,19 +377,25 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                 if (lastSeenIdx == kInvalidIdx) {
                     // Opening control sequence
                     seenControlSeqs.push_back(ControlSequence{
-                        .begin = idx,
+                        .begin = AdjustBufferIndex(source, reader, -kVisionSize),
                         .pattern = pattern,
                         .patternFlag = patternFlag,
                     });
                 } else {
                     // Closing control sequence
-                    // Remove the record of this control seq (and everything after because they can't possibly be
-                    // matched, since we disallow intermingled syntax like *foo_bar*_)
-                    seenControlSeqs.resize(lastSeenIdx + 1);
 
                     auto& lastSeen = seenControlSeqs[lastSeenIdx];
-                    lastSeen.end = idx + pattern.size();
-                    lastSeen.hasClosingControlSeq = true;
+                    lastSeen.end = AdjustBufferIndex(source, reader, -kVisionSize + pattern.size());
+
+                    // Remove the record of this control seq (and everything after because they can't possibly be matched, since we disallow intermingled syntax like *foo_bar*_)
+                    size_t lastUnclosedControlSeq = seenControlSeqs.size();
+                    while (lastUnclosedControlSeq-- > 0) {
+                        if (seenControlSeqs[lastUnclosedControlSeq].HasClosingControlSeq()) {
+                            lastUnclosedControlSeq++;
+                            break;
+                        }
+                    }
+                    seenControlSeqs.resize(lastUnclosedControlSeq);
 
                     // If we matched the very first control sequence, i.e. going back to unformatted text now
                     if (lastSeenIdx == 0) {
@@ -342,7 +403,7 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                         seenControlSeqs.clear();
                     }
                 }
-                idx += pattern.size();
+                skipCount = pattern.size() - 1;
                 return true;
             };
             auto doMatchings = [&](std::initializer_list<std::string_view> patterns, FormatFlagPtr patternFlag) {
@@ -364,9 +425,19 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                 // Set escaping state for the next character
                 // If this is a '\', and it's being escaped, treat this just as plain text; otherwise escape the next character
                 // If this is anything else, this condition will evaluate to false
-                isEscaping = cc == '\\' && !isEscaping;
-                ++idx;
+                isEscaping = visionBuffer[0] == '\\' && !isEscaping;
             }
+        }
+    }
+
+    // Output the last TextRun from end of the last formatted stack to end of buffer, if there is any
+    if (!outTextRuns.empty()) {
+        auto& last = outTextRuns.back();
+        if (last.end != source.bufferSize) {
+            outputTextRun(TextRun{
+                .begin = last.end,
+                .end = source.bufferSize,
+            });
         }
     }
 
@@ -387,7 +458,12 @@ void ShowDebugTextRun(std::string_view source, const TextRun& tr) {
     ImGui::Indent();
     auto window = ImGui::GetCurrentWindowRead();
     auto ptTopLeft = window->DC.CursorPos;
+
+    // Use default font because that has clearly recognizable glyph boundaries, easier for debugging purposes
+    ImGui::PushFont(nullptr);
     ImGui::Text("%.*s", (int)substr.size(), substr.begin());
+    ImGui::PopFont();
+
     auto tpBottomLeft = window->DC.CursorPos;
     ImGui::Unindent();
     ImGui::GetWindowDrawList()->AddRect(ptTopLeft, ImVec2(ImGui::GetContentRegionAvail().x, tpBottomLeft.y), IM_COL32(255, 255, 0, 255));
@@ -399,6 +475,27 @@ void ShowDebugTextRuns(std::string_view source, std::span<const TextRun> textRun
         ImGui::Text("[%zu]", i);
         ImGui::SameLine();
         ShowDebugTextRun(source, textRuns[i]);
+    }
+}
+
+void PrintDebugTextRun(std::string_view source, const TextRun& tr) {
+    auto substr = source.substr(tr.begin, tr.end - tr.begin);
+    printf("[%3zu,%3zu) %c%c%c%c%c \"%.*s\"\n",
+        tr.begin,
+        tr.end,
+        tr.isBold ? 'b' : '-',
+        tr.isItalic ? 'i' : '-',
+        tr.isUnderline ? 'u' : '-',
+        tr.isStrikethrough ? 's' : '-',
+        tr.isMonospace ? 'm' : '-',
+        (int)substr.size(),
+        substr.begin());
+}
+
+void PrintDebugTextRuns(std::string_view source, std::span<const TextRun> textRuns) {
+    for (size_t i = 0; i < textRuns.size(); ++i) {
+        printf("[%zu] ", i);
+        PrintDebugTextRun(source, textRuns[i]);
     }
 }
 #endif
@@ -430,25 +527,6 @@ int64_t CalcAdjacentWordPos(TextBuffer& buf, int64_t index, int delta) {
     // TODO
 
     return index;
-}
-
-int64_t MapLogicalIndexToBufferIndex(const TextBuffer& buf, int64_t logicalIdx) {
-    if (logicalIdx < buf.frontSize) {
-        return logicalIdx;
-    } else {
-        return logicalIdx + (int64_t)buf.gapSize;
-    }
-}
-
-// If the buffer index does not point to a valid logical location (i.e. it points to somewhere in the gap), -1 is returned
-int64_t MapBufferIndexToLogicalIndex(const TextBuffer& buf, int64_t bufferIdx) {
-    if (bufferIdx < buf.frontSize) {
-        return bufferIdx;
-    } else if (/* bufferIdx >= buf.frontSize && */ bufferIdx < (buf.frontSize + buf.gapSize)) {
-        return -1;
-    } else {
-        return bufferIdx - (int64_t)buf.gapSize;
-    }
 }
 
 std::pair<int64_t, int64_t> FindLineWrapBoundsForIndex(const TextEdit& te, int64_t index) {

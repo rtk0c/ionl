@@ -4,6 +4,7 @@
 // - Unicode/language-aware cursor movement (TODO do we need to grab ICU for this?)
 #pragma once
 
+#include "MarkdownStyles.hpp"
 #include "imgui.h"
 
 #include <string>
@@ -15,38 +16,6 @@ namespace Ionl {
 // TODO DPI handling?
 // TODO figure out font caching or SDF based rendering: generating a separate atlas for each heading type is really costly on VRAM
 
-/// Represents a (potential) font variant to be used.
-/// Each element except 'regular' may be missing, and should fallback to the regular style.
-enum MarkdownFace {
-    // NOTE: these must all have the same FontSize
-    // NOTE: no underline and strikethrough fonts, we just draw our own decorations for those
-    MF_Proportional,
-    MF_ProportionalItalic,
-    MF_ProportionalBold,
-    MF_ProportionalBoldItalic,
-    MF_Monospace,
-    MF_MonospaceItalic,
-    MF_MonospaceBold,
-    MF_MonospaceBoldItalic,
-
-    MF_Heading1,
-    MF_Heading2,
-    MF_Heading3,
-    MF_Heading4,
-    MF_Heading5,
-    MF_META_HeadingMax = MF_Heading5,
-
-    MF_COUNT,
-};
-
-struct TextStyles {
-    ImFont* faceFonts[MF_COUNT];
-    ImU32 faceColors[MF_COUNT];
-    // Must be set by the user to...
-    float regularFontSize /* = fonts[MF_Proportional]->FontSize */;
-};
-extern TextStyles gTextStyles;
-
 struct TextBuffer {
     ImWchar* buffer;
     int64_t bufferSize;
@@ -56,6 +25,15 @@ struct TextBuffer {
     TextBuffer();
     TextBuffer(std::string_view content);
     ~TextBuffer();
+
+    ImWchar* begin() { return buffer; }
+    ImWchar* end() { return buffer + bufferSize; }
+
+    const ImWchar* begin() const { return buffer; }
+    const ImWchar* end() const { return buffer + bufferSize; }
+
+    const ImWchar* cbegin() const { return buffer; }
+    const ImWchar* cend() const { return buffer + bufferSize; }
 
     int64_t GetContentSize() const { return bufferSize - gapSize; }
 

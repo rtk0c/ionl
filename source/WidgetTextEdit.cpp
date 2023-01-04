@@ -199,20 +199,30 @@ void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
 struct TextRun {
     int64_t begin;
     int64_t end;
-
-    // Face variants
-    bool isMonospace;
-    bool isBold;
-    bool isItalic;
-    // Decorations
-    bool isUnderline;
-    bool isStrikethrough;
+    TextStyle style;
 };
 
-std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
-    std::vector<TextRun> outTextRuns;
+struct ParseInput {
+    // [Required] Source buffer to parse markdown from.
+    const TextBuffer* tb;
+};
 
-    using FormatFlagPtr = bool TextRun::*;
+struct ParseOutput {
+    std::vector<TextRun> textRuns;
+};
+
+ParseOutput ParseMarkdownBuffer(const ParseInput& in) {
+    ParseOutput out;
+
+    // TODO this honestly is a lot of edge case handling, maybe we really should just use irccloud-format-helper-2's code
+    // TODO handle cases like ***bold and italic***, the current greedy matching method parses it as **/*text**/* which breaks the control seq pairing logic
+    //      note this is also broken in irccloud-format-helper, so that won't help
+
+    // TODO break parsing state on \n
+    // TODO handle headings
+    // TODO handle code blocks
+
+    using FormatFlagPtr = bool TextStyle::*;
     struct ControlSequence {
         int64_t begin = 0;
         int64_t end = 0;
@@ -245,10 +255,10 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
         }
     };
 
-    // Insert a single TextRun into `outTextRuns`
+    // Insert a single TextRun into `out.textRuns`
     auto outputTextRun = [&](TextRun run) {
-        auto gapBegin = source.frontSize;
-        auto gapEnd = source.frontSize + source.gapSize;
+        auto gapBegin = in.tb->frontSize;
+        auto gapEnd = in.tb->frontSize + in.tb->gapSize;
         if (run.begin < gapBegin && run.end > gapEnd) {
             // TextRun spans over the gap, we need to split it
             TextRun& frontRun = run;
@@ -259,14 +269,14 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
             backRun.begin = gapEnd;
             /* backRun.end; */ // Remain unchanged
 
-            outTextRuns.push_back(std::move(frontRun));
-            outTextRuns.push_back(std::move(backRun));
+            out.textRuns.push_back(std::move(frontRun));
+            out.textRuns.push_back(std::move(backRun));
         } else {
-            outTextRuns.push_back(std::move(run));
+            out.textRuns.push_back(std::move(run));
         }
     };
 
-    // Insert all TextRun's represented inside `seenControlSeqs` into `outTextRuns`
+    // Insert all TextRun's represented inside `seenControlSeqs` into `out.textRuns`
     auto outputAllMatchedTextRuns = [&]() {
         // We assume that all elements appear with monotonically increasing `ControlSequence::begin`,
         // which should be maintained by the scanning logic below
@@ -290,8 +300,8 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
 
         TextRun tr{};
         // Continue from the previous text run (covering unformatted text between this and last "stack" of formatted text), if there is one
-        if (!outTextRuns.empty()) {
-            tr.begin = outTextRuns.back().end;
+        if (!out.textRuns.empty()) {
+            tr.begin = out.textRuns.back().end;
         }
         for (const auto& op : ops) {
             /* tr.begin; */ // Set by previous iteration or starting value
@@ -299,7 +309,7 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
 
             outputTextRun(tr);
 
-            bool& flag = tr.*(op.flag);
+            bool& flag = tr.style.*(op.flag);
             flag = !flag;
 
             if (tr.begin == tr.end) {
@@ -317,10 +327,10 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
     // When the parser initiates, "reader" is advanced (thus filling the lookahead buffer) until "head" reaches 0 (points to the first valid character), or until "reader" reaches end of the input buffer.
 
     std::pair<int64_t, int64_t> sourceSegments[] = {
-        { source.GetFrontBegin(), source.GetFrontSize() },
-        { source.GetBackBegin(), source.GetBackSize() },
+        { in.tb->GetFrontBegin(), in.tb->GetFrontSize() },
+        { in.tb->GetBackBegin(), in.tb->GetBackSize() },
         // The dummy segment at the very end for "head" to advance until the very end of source buffer
-        { source.GetBackEnd(), kVisionSize - 1 },
+        { in.tb->GetBackEnd(), kVisionSize - 1 },
     };
     int skipCount = 0;
     for (auto it = std::begin(sourceSegments); it != std::end(sourceSegments); ++it) {
@@ -334,7 +344,7 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
         while (reader < segmentEnd) {
             std::shift_left(std::begin(visionBuffer), std::end(visionBuffer), 1);
             if (!isLastSourceSegment) {
-                visionBuffer[kVisionSize - 1] = source.buffer[reader];
+                visionBuffer[kVisionSize - 1] = in.tb->buffer[reader];
             } else {
                 visionBuffer[kVisionSize - 1] = '\0';
             }
@@ -377,7 +387,7 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                 if (lastSeenIdx == kInvalidIdx) {
                     // Opening control sequence
                     seenControlSeqs.push_back(ControlSequence{
-                        .begin = AdjustBufferIndex(source, reader, -kVisionSize),
+                        .begin = AdjustBufferIndex(*in.tb, reader, -kVisionSize),
                         .pattern = pattern,
                         .patternFlag = patternFlag,
                     });
@@ -385,7 +395,7 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                     // Closing control sequence
 
                     auto& lastSeen = seenControlSeqs[lastSeenIdx];
-                    lastSeen.end = AdjustBufferIndex(source, reader, -kVisionSize + pattern.size());
+                    lastSeen.end = AdjustBufferIndex(*in.tb, reader, -kVisionSize + pattern.size());
 
                     // Remove the record of this control seq (and everything after because they can't possibly be matched, since we disallow intermingled syntax like *foo_bar*_)
                     size_t lastUnclosedControlSeq = seenControlSeqs.size();
@@ -415,10 +425,10 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
                 return false;
             };
 
-            if (doMatching("**"sv, &TextRun::isBold) ||
-                doMatching("__"sv, &TextRun::isUnderline) ||
-                doMatching("~~"sv, &TextRun::isStrikethrough) ||
-                doMatchings({ "*"sv, "_"sv }, &TextRun::isItalic))
+            if (doMatching("**"sv, &TextStyle::isBold) ||
+                doMatching("__"sv, &TextStyle::isUnderline) ||
+                doMatching("~~"sv, &TextStyle::isStrikethrough) ||
+                doMatchings({ "*"sv, "_"sv }, &TextStyle::isItalic))
             {
                 // No-op, handled inside the helper
             } else {
@@ -431,17 +441,17 @@ std::vector<TextRun> ParseMarkdownBuffer(const TextBuffer& source) {
     }
 
     // Output the last TextRun from end of the last formatted stack to end of buffer, if there is any
-    if (!outTextRuns.empty()) {
-        auto& last = outTextRuns.back();
-        if (last.end != source.bufferSize) {
+    if (!out.textRuns.empty()) {
+        auto& last = out.textRuns.back();
+        if (last.end != in.tb->bufferSize) {
             outputTextRun(TextRun{
                 .begin = last.end,
-                .end = source.bufferSize,
+                .end = in.tb->bufferSize,
             });
         }
     }
 
-    return outTextRuns;
+    return out;
 }
 
 #ifdef IONL_SHOW_DEBUG_INFO
@@ -450,11 +460,11 @@ void ShowDebugTextRun(std::string_view source, const TextRun& tr) {
     ImGui::Text("Segment: [%zu,%zu); %c%c%c%c%c",
         tr.begin,
         tr.end,
-        tr.isBold ? 'b' : '-',
-        tr.isItalic ? 'i' : '-',
-        tr.isUnderline ? 'u' : '-',
-        tr.isStrikethrough ? 's' : '-',
-        tr.isMonospace ? 'm' : '-');
+        tr.style.isBold ? 'b' : '-',
+        tr.style.isItalic ? 'i' : '-',
+        tr.style.isUnderline ? 'u' : '-',
+        tr.style.isStrikethrough ? 's' : '-',
+        tr.style.isMonospace ? 'm' : '-');
     ImGui::Indent();
     auto window = ImGui::GetCurrentWindowRead();
     auto ptTopLeft = window->DC.CursorPos;
@@ -483,11 +493,11 @@ void PrintDebugTextRun(std::string_view source, const TextRun& tr) {
     printf("[%3zu,%3zu) %c%c%c%c%c \"%.*s\"\n",
         tr.begin,
         tr.end,
-        tr.isBold ? 'b' : '-',
-        tr.isItalic ? 'i' : '-',
-        tr.isUnderline ? 'u' : '-',
-        tr.isStrikethrough ? 's' : '-',
-        tr.isMonospace ? 'm' : '-',
+        tr.style.isBold ? 'b' : '-',
+        tr.style.isItalic ? 'i' : '-',
+        tr.style.isUnderline ? 'u' : '-',
+        tr.style.isStrikethrough ? 's' : '-',
+        tr.style.isMonospace ? 'm' : '-',
         (int)substr.size(),
         substr.begin());
 }
@@ -499,6 +509,82 @@ void PrintDebugTextRuns(std::string_view source, std::span<const TextRun> textRu
     }
 }
 #endif
+
+struct GlyphRun {
+    TextRun tr;
+
+    // Position of the first glyph in this run, in text canvas space
+    ImVec2 pos;
+    float horizontalAdvance = 0.0f;
+};
+
+struct LayoutInput {
+    // [Required] Markdown styling.
+    const MarkdownStylesheet* styles;
+    // [Required] Source buffer which generated the TextRun's.
+    const TextBuffer* tb;
+    // [Required]
+    std::span<const TextRun> textRuns;
+    // [Optional] Width to wrap lines at; set to 0.0f to ignore line width.
+    float viewportWidth = std::numeric_limits<float>::max();
+};
+
+struct LayoutOutput {
+    std::vector<GlyphRun> glyphRuns;
+    ImVec2 boundingBox;
+};
+
+LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
+    LayoutOutput out;
+
+    ImVec2 currPos{};
+    ImVec2 currLineDim{};
+
+    for (const auto& textRun : in.textRuns) {
+        auto& face = in.styles->LookupFace(textRun.style);
+
+        const ImWchar* beg = &in.tb->buffer[textRun.begin];
+        const ImWchar* end = &in.tb->buffer[textRun.end];
+        // Try to lay this [beg,end) on current line, and if we can't, retry with [remaining,end) until we are done with this TextRun
+        while (true) {
+            const ImWchar* remaining;
+            // `wrap_width` is for automatically laying the text in multiple lines (and return the size of all lines).
+            // We want to perform line wrapping ourselves, so we use `max_width` to instruct ImGui to stop after reaching the line width.
+            auto runDim = face.font->CalcTextSize(face.font->FontSize, in.viewportWidth, 0.0f, beg, end, &remaining);
+            currPos.x += runDim.x;
+            currLineDim.x += runDim.x;
+            currLineDim.y = ImMax(currLineDim.y, runDim.y);
+
+            GlyphRun glyphRun;
+            glyphRun.tr = textRun;
+            glyphRun.tr.begin = std::distance(in.tb->begin(), beg);
+            glyphRun.tr.end = std::distance(in.tb->begin(), remaining);
+            glyphRun.pos = currPos;
+            glyphRun.horizontalAdvance = runDim.x;
+            out.glyphRuns.push_back(std::move(glyphRun));
+
+            if (remaining == in.tb->end()) {
+                // Finished processing this TextRun
+                break;
+            }
+
+            // Not finished, next iteration: [remaining,end)
+            beg = remaining;
+
+            // Wrap onto next line
+            currPos.x = 0;
+            currPos.y += currLineDim.y + in.styles->linePadding;
+            out.boundingBox.x = ImMax(out.boundingBox.x, currLineDim.x);
+            out.boundingBox.y += currLineDim.y + in.styles->linePadding;
+            currLineDim = {};
+        }
+    }
+
+    // Add last line's height (where the wrapping code is not reached)
+    out.boundingBox.y += currLineDim.y;
+
+    return out;
+}
 
 bool IsCharAPartOfWord(ImWchar c) {
     return !std::isspace(c);
@@ -605,56 +691,6 @@ Ionl::TextBuffer::~TextBuffer() {
     free(buffer);
 }
 
-namespace {
-using namespace Ionl;
-
-struct FaceTrait {
-    size_t loc = std::numeric_limits<size_t>::max();
-    ImVec2 pos;
-    bool state = false;
-};
-
-struct FaceDescription {
-    FaceTrait bold;
-    FaceTrait italic;
-    FaceTrait underline;
-    FaceTrait strikethrough;
-    FaceTrait monospace;
-};
-
-void LocateFace(const FaceDescription& desc, ImFont*& outFont, ImU32& outColor) {
-    if (desc.monospace.state) {
-        if (desc.bold.state && desc.italic.state) {
-            outFont = gTextStyles.faceFonts[MF_MonospaceBoldItalic];
-            outColor = gTextStyles.faceColors[MF_MonospaceBoldItalic];
-        } else if (desc.bold.state) {
-            outFont = gTextStyles.faceFonts[MF_MonospaceBold];
-            outColor = gTextStyles.faceColors[MF_MonospaceBold];
-        } else if (desc.italic.state) {
-            outFont = gTextStyles.faceFonts[MF_MonospaceItalic];
-            outColor = gTextStyles.faceColors[MF_MonospaceItalic];
-        } else {
-            outFont = gTextStyles.faceFonts[MF_Monospace];
-            outColor = gTextStyles.faceColors[MF_Monospace];
-        }
-    } else {
-        if (desc.bold.state && desc.italic.state) {
-            outFont = gTextStyles.faceFonts[MF_ProportionalBoldItalic];
-            outColor = gTextStyles.faceColors[MF_ProportionalBoldItalic];
-        } else if (desc.bold.state) {
-            outFont = gTextStyles.faceFonts[MF_ProportionalBold];
-            outColor = gTextStyles.faceColors[MF_ProportionalBold];
-        } else if (desc.italic.state) {
-            outFont = gTextStyles.faceFonts[MF_ProportionalItalic];
-            outColor = gTextStyles.faceColors[MF_ProportionalItalic];
-        } else {
-            outFont = gTextStyles.faceFonts[MF_Proportional];
-            outColor = gTextStyles.faceColors[MF_Proportional];
-        }
-    }
-};
-} // namespace
-
 void Ionl::TextEdit::Show() {
     auto& g = *ImGui::GetCurrentContext();
     auto& io = ImGui::GetIO();
@@ -666,334 +702,7 @@ void Ionl::TextEdit::Show() {
     auto contentRegionAvail = ImGui::GetContentRegionAvail();
     auto drawList = window->DrawList;
 
-    bool escaping = false;
-    FaceDescription faceDesc;
-    ImFont* faceFont;
-    ImU32 faceColor;
-    LocateFace(faceDesc, faceFont, faceColor);
-
-    ImVec2 textPos = window->DC.CursorPos;
-    float textStartX = textPos.x;
-    float totalHeight = 0.0f;
-
-    // TODO use the corret font for each character
-    auto wordWrapFont = gTextStyles.faceFonts[MF_Proportional];
-    GapBufferIterator it(*buffer);
-    GapBufferIterator end(*buffer);
-    end.SetEnd();
-
-    GapBufferIterator wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
-    auto CursorPosWrapLine = [&]() {
-        float dy = faceFont->FontSize + linePadding;
-        textPos.x = textStartX;
-        textPos.y += dy;
-        totalHeight += dy;
-    };
-
-    auto bufferIndexOfCursor = MapLogicalIndexToBufferIndex(*buffer, _cursorIdx);
-
-    // NOTE: pattern must be ASCII
-    auto ChMatches = [&](std::string_view patternStr) {
-        auto pattern = patternStr.data();
-        auto haystack = it;
-        while (true) {
-            // Matched the whole pattern
-            if (*pattern == '\0') return true;
-            // Reached end of input before matching the whole pattern
-            if (!haystack.HasNext()) return false;
-
-            if (*pattern != *haystack) {
-                return false;
-            }
-            ++pattern;
-            ++haystack;
-        }
-    };
-    auto DrawGlyph = [&](ImWchar c) {
-        auto glyph = faceFont->FindGlyph(c);
-        if (!glyph) return false;
-
-        if (glyph->Visible) {
-            ImVec2 pos0(textPos.x + glyph->X0, textPos.y + glyph->Y0);
-            ImVec2 pos1(textPos.x + glyph->X1, textPos.y + glyph->Y1);
-
-            ImVec2 uv0(glyph->U0, glyph->V0);
-            ImVec2 uv1(glyph->U1, glyph->V1);
-
-            ImU32 glyphColor = glyph->Colored ? (faceColor | ~IM_COL32_A_MASK) : faceColor;
-            drawList->PrimRectUV(pos0, pos1, uv0, uv1, glyphColor);
-#ifdef IONL_SHOW_DEBUG_BOUNDING_BOXES
-            ImGui::GetForegroundDrawList()->AddRect(pos0, pos1, IM_COL32(0, 255, 255, 255));
-#endif
-
-            textPos.x += glyph->AdvanceX;
-            return true;
-        }
-
-        textPos.x += glyph->AdvanceX;
-        return false;
-    };
-
-    // Clear but don't free memory
-    _wrapPoints.resize(0);
-
-    // TODO move markdown parser loop out
-    // TODO use gap buffer streaming, to reduce branching inside GapBufferIterator
-    // TODO define line as "characters, followed by \n" so that we can have a valid index for the cursor at the end of buffer
-    while (it.HasNext()) {
-        bool isHardWrap = *it == '\n';
-        bool isSoftWrap = it > wrapPoint;
-        if (isHardWrap || isSoftWrap) {
-            if (isSoftWrap) {
-                // TODO fix position calculation: this currently assumes all glyphs are of the regular proportional variant, so for e.g. all bold text, or all code text it's broken
-                wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
-                _wrapPoints.push_back(MapBufferIndexToLogicalIndex(*buffer, it.idx));
-            }
-            if (isHardWrap) {
-                if (bufferIndexOfCursor == it.idx) {
-                    _cursorAssociatedFont = faceFont;
-                    _cursorVisualOffset = textPos - window->DC.CursorPos;
-                }
-
-                // Skip \n
-                ++it;
-            }
-
-            // Position at current end of line
-            auto oldTextPos = textPos;
-            // NOTE: this updates `textPos`
-            CursorPosWrapLine();
-
-            // Draw the text decoration to current pos (end of line), and then "transplant" them to the next line
-            if (faceDesc.underline.state) {
-                float yOffset = faceFont->FontSize;
-                drawList->AddLine(
-                    ImVec2(faceDesc.underline.pos.x, faceDesc.underline.pos.y + yOffset),
-                    ImVec2(oldTextPos.x, oldTextPos.y + yOffset),
-                    faceColor);
-
-                faceDesc.underline.pos = textPos;
-            }
-            if (faceDesc.strikethrough.state) {
-                float yOffset = faceFont->FontSize / 2;
-                drawList->AddLine(
-                    ImVec2(faceDesc.strikethrough.pos.x, faceDesc.strikethrough.pos.y + yOffset),
-                    ImVec2(oldTextPos.x, oldTextPos.y + yOffset),
-                    faceColor);
-
-                faceDesc.strikethrough.pos = textPos;
-            }
-
-            if (isHardWrap) {
-                continue;
-            }
-        }
-
-        auto oldIt = it;
-
-        // Heading parsing
-        if (*it == '#') {
-            int headingLevel = 0;
-            while (*it == '#') {
-                ++it;
-                headingLevel += 1;
-            }
-            headingLevel = ImMin<int>(headingLevel, MF_META_HeadingMax);
-
-            // Do the all the text rendering here (heading style overrides everything else)
-            faceFont = gTextStyles.faceFonts[MF_Heading1 + headingLevel];
-            faceColor = gTextStyles.faceColors[MF_Heading1 + headingLevel];
-
-            // TODO is it a better idea to create title faces, and then let the main loop handle it?
-            // that way we could reduce quite a few lines of duplicated logic, especially for handling line breaks
-            // This also allows it to handle things like inline code inside a title
-
-            it = oldIt;
-            size_t charCount = 0;
-            while (*it != '\n' && it.HasNext()) {
-                charCount += 1;
-                ++it;
-            }
-            it = oldIt;
-
-            // Recalculate wrap position, because in the general case we pretend all text is the regular proportional face
-            // TODO get rid of this once the general case can handle fonts properly
-            wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, it, end, contentRegionAvail.x);
-
-            drawList->PrimReserve(charCount * 6, charCount * 4);
-            size_t charsDrawn = 0;
-            while (*it != '\n' && it.HasNext()) {
-                if (it > wrapPoint) {
-                    // TODO record wrap point
-                    CursorPosWrapLine();
-                    wrapPoint = ImCalcWordWrapPosition(faceFont, 1.0f, it, end, contentRegionAvail.x);
-                }
-
-                if (it.idx == bufferIndexOfCursor) {
-                    _cursorAssociatedFont = faceFont;
-                    _cursorVisualOffset = textPos - window->DC.CursorPos;
-                }
-
-                if (DrawGlyph(*it)) {
-                    charsDrawn += 1;
-                }
-                ++it;
-            }
-            drawList->PrimUnreserve((charCount - charsDrawn) * 6, (charCount - charsDrawn) * 4);
-
-            // Handle the \n character
-            CursorPosWrapLine();
-            ++it;
-
-            // Recalculate wrapPoint using normal face
-            // TODO get rid of this once the general case can handle fonts properly
-            wrapPoint = ImCalcWordWrapPosition(wordWrapFont, 1.0f, it, end, contentRegionAvail.x);
-            // Restore to regular face
-            faceFont = gTextStyles.faceFonts[MF_Proportional];
-            faceColor = gTextStyles.faceColors[MF_Proportional];
-
-            continue;
-        }
-
-        // Code block parsing
-        if (ChMatches("```")) {
-            // TODO
-            continue;
-        }
-
-        bool delayedUpdateFormat = false;
-
-        // Used for drawing underline and strikethrough
-        ImVec2 delayedLineStartPos;
-        ImU32 delayedLineColor;
-        float delayedLineYOffset;
-
-        size_t segmentSize = 0;
-        // Returns true if a formatting operator is consumed (may not be effective, i.e. escaped)
-        // Returns false if nothing is consumed
-        // NOTE: pattern must be ASCII
-        auto ChConsume = [&](std::string_view pattern, FaceTrait& props) {
-            if (!ChMatches(pattern)) return false;
-
-            // Treat as normal text
-            if (escaping) {
-                escaping = false;
-
-                it += pattern.size();
-                return false;
-            }
-
-            if (props.state) {
-                // Closing specifier
-                props.state = false;
-                props.loc = std::numeric_limits<size_t>::max();
-                props.pos = ImVec2();
-                delayedUpdateFormat = true;
-            } else {
-                // Opening specifier
-                props.state = true;
-                props.loc = it.idx;
-                props.pos = textPos;
-                LocateFace(faceDesc, faceFont, faceColor);
-            }
-
-            it += pattern.size();
-            segmentSize = pattern.size();
-            return true;
-        };
-
-        do {
-            // Inline code
-            // TODO implement consecutive code collapsing
-            if (ChConsume("`"sv, faceDesc.monospace)) break;
-            if (!faceDesc.monospace.state) {
-                // Bold
-                if (ChConsume("**"sv, faceDesc.bold)) break;
-
-                // Underline
-                if (auto pos = faceDesc.underline.pos;
-                    ChConsume("__"sv, faceDesc.underline))
-                {
-                    // Closing specifier
-                    if (!faceDesc.underline.state) {
-                        delayedLineStartPos = pos;
-                        delayedLineColor = faceColor;
-                        delayedLineYOffset = faceFont->FontSize;
-                    }
-                    break;
-                }
-
-                // Strikethrough
-                if (auto pos = faceDesc.strikethrough.pos;
-                    ChConsume("~~"sv, faceDesc.strikethrough))
-                {
-                    // Closing specifier
-                    if (!faceDesc.strikethrough.state) {
-                        delayedLineStartPos = pos;
-                        delayedLineColor = faceColor;
-                        delayedLineYOffset = faceFont->FontSize / 2;
-                    }
-                    break;
-                }
-
-                // Italic
-                if (ChConsume("*"sv, faceDesc.italic) ||
-                    ChConsume("_"sv, faceDesc.italic))
-                {
-                    break;
-                }
-            }
-
-            // Set escaping state for the next character
-            // If this is a '\', and it's being escaped, treat this just as plain text; otherwise escape the next character
-            // If this is anything else, this condition will evaluate to false
-            escaping = *it == '\\' && !escaping;
-            segmentSize = 1;
-            ++it;
-        } while (false);
-
-        // We can't do this per-line or per-buffer, because other AddLine() AddXxx() calls happen within this loop too, which will mess up the assumptions
-        // TODO this is a quite dumb overhead, optimize
-        drawList->PrimReserve(segmentSize * 6, segmentSize * 4);
-        // Draw the current segment of text, [oldIt, cursor)
-        size_t charsDrawn = 0;
-        for (auto ch = oldIt; ch != it; ++ch) {
-            // Handle cursor positioning
-            // NOTE: we must do this before calling DrawGlyph(), because it moves textPos to the next glyph
-            // NOTE: this relies on \n being processed by the loop to place hard wrapped line ends correctly
-            // TODO this places definitive cursor on the last char of the previous line, not good; we need to handle the "one after line end" case
-            // TODO handle hard line breaks
-            // TODO if we use cursorAffinity on the char before the line wrap, it will give much nicer logic in this place
-            if ((!_cursorAffinity && bufferIndexOfCursor == ch.idx) ||
-                (_cursorAffinity && bufferIndexOfCursor == ch.idx + 1))
-            {
-                _cursorAssociatedFont = faceFont;
-                _cursorVisualOffset = textPos - window->DC.CursorPos;
-                if (_cursorAffinity) {
-                    auto glyph = faceFont->FindGlyph(*ch);
-                    _cursorVisualOffset.x += glyph ? glyph->AdvanceX : 0;
-                }
-            }
-
-            if (DrawGlyph(*ch)) {
-                charsDrawn += 1;
-            }
-        }
-        drawList->PrimUnreserve((segmentSize - charsDrawn) * 6, (segmentSize - charsDrawn) * 4);
-
-        if (delayedUpdateFormat) {
-            LocateFace(faceDesc, faceFont, faceColor);
-        }
-        if (delayedLineStartPos.x != 0.0f) {
-            drawList->AddLine(
-                ImVec2(delayedLineStartPos.x, delayedLineStartPos.y + delayedLineYOffset),
-                ImVec2(textPos.x, textPos.y + delayedLineYOffset),
-                delayedLineColor);
-        }
-    }
-
-    // For the last line (which doesn't end in a \n)
-    CursorPosWrapLine();
+    float totalHeight = 10.0f; // TODO
 
     ImVec2 widgetSize(contentRegionAvail.x, totalHeight);
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + widgetSize };

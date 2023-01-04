@@ -394,6 +394,7 @@ int main() {
     // TODO do we want to include this only in debug builds?
     io.Fonts->AddFontDefault();
 
+    /*
     // TODO proper discovery code
     float fontSize = 18.0f;
     gTextStyles.faceFonts[MF_Proportional] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
@@ -424,6 +425,7 @@ int main() {
     InitHeadingFont(MF_Heading3, 1.5f);
     InitHeadingFont(MF_Heading4, 1.2f);
     InitHeadingFont(MF_Heading5, 1.0f);
+    */
 
     AppState as;
     double lastWriteTime = 0.0;

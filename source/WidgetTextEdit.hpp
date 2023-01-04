@@ -16,15 +16,15 @@ namespace Ionl {
 // TODO DPI handling?
 // TODO figure out font caching or SDF based rendering: generating a separate atlas for each heading type is really costly on VRAM
 
-struct TextBuffer {
+struct GapBuffer {
     ImWchar* buffer;
     int64_t bufferSize;
     int64_t frontSize;
     int64_t gapSize;
 
-    TextBuffer();
-    TextBuffer(std::string_view content);
-    ~TextBuffer();
+    GapBuffer();
+    GapBuffer(std::string_view content);
+    ~GapBuffer();
 
     ImWchar* begin() { return buffer; }
     ImWchar* end() { return buffer + bufferSize; }
@@ -50,7 +50,7 @@ struct TextBuffer {
     int64_t GetBackSize() const { return GetBackEnd() - GetBackBegin(); }
 
     const ImWchar& operator[](size_t i) const { return i > frontSize ? buffer[i + gapSize] : buffer[i]; }
-    ImWchar& operator[](size_t i) { return const_cast<ImWchar&>(const_cast<const TextBuffer&>(*this)[i]); }
+    ImWchar& operator[](size_t i) { return const_cast<ImWchar&>(const_cast<const GapBuffer&>(*this)[i]); }
 
     std::string ExtractContent() const;
     void UpdateContent(std::string_view content);
@@ -61,7 +61,7 @@ struct TextBuffer {
 struct TextEdit {
     /* [In] */ ImGuiID id;
     /* [In] */ float linePadding = 0.0f;
-    /* [In] */ TextBuffer* buffer;
+    /* [In] */ GapBuffer* buffer;
 
     // Generates during render loop, a list of character indices which line wraps (both soft and hard wraps)
     // This vector should always be sorted.
@@ -73,7 +73,7 @@ struct TextEdit {
     // TODO should we move all of these to a global shared state like ImGui::InputText()?
     //   b/c there can only be one active text edit at any given time anyways, so this could simply this widget down to Ionl::TextEdit(GapBuffer& document);
     //   Counterargument: if we add shortcut to cycle between bullets, it might be desired for each bullet/TextEdit to memorize the cursor position just like every other proper text editor in existence
-    //   The other advantage is not having to worry about adjusting the cursor position when multiple TextEdit refer to the same TextBuffer
+    //   The other advantage is not having to worry about adjusting the cursor position when multiple TextEdit refer to the same GapBuffer
 
     // The cursor is represented by a logical index into the buffer, that either points to an existing character or end of the logical area.
     // When the cursor is moved, the gap position is not adjusted immediately -- this means:

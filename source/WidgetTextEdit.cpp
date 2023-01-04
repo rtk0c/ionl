@@ -18,7 +18,7 @@ Ionl::TextStyles Ionl::gTextStyles;
 namespace {
 using namespace Ionl;
 
-int64_t MapLogicalIndexToBufferIndex(const TextBuffer& buffer, int64_t logicalIdx) {
+int64_t MapLogicalIndexToBufferIndex(const GapBuffer& buffer, int64_t logicalIdx) {
     if (logicalIdx < buffer.frontSize) {
         return logicalIdx;
     } else {
@@ -27,7 +27,7 @@ int64_t MapLogicalIndexToBufferIndex(const TextBuffer& buffer, int64_t logicalId
 }
 
 // If the buffer index does not point to a valid logical location (i.e. it points to somewhere in the gap), -1 is returned
-int64_t MapBufferIndexToLogicalIndex(const TextBuffer& buffer, int64_t bufferIdx) {
+int64_t MapBufferIndexToLogicalIndex(const GapBuffer& buffer, int64_t bufferIdx) {
     if (bufferIdx < buffer.frontSize) {
         return bufferIdx;
     } else if (/* bufferIdx >= buffer.frontSize && */ bufferIdx < (buffer.frontSize + buffer.gapSize)) {
@@ -37,7 +37,7 @@ int64_t MapBufferIndexToLogicalIndex(const TextBuffer& buffer, int64_t bufferIdx
     }
 }
 
-int64_t AdjustBufferIndex(const TextBuffer& buffer, int64_t /*buffer index*/ idx, int64_t delta) {
+int64_t AdjustBufferIndex(const GapBuffer& buffer, int64_t /*buffer index*/ idx, int64_t delta) {
     int64_t gapBeginIdx = buffer.frontSize;
     int64_t gapEndIdx = buffer.frontSize + buffer.gapSize;
     int64_t gapSize = buffer.gapSize;
@@ -54,13 +54,13 @@ int64_t AdjustBufferIndex(const TextBuffer& buffer, int64_t /*buffer index*/ idx
 }
 
 struct GapBufferIterator {
-    TextBuffer* obj;
+    GapBuffer* obj;
     // We use signed here to avoid all the Usual Arithmetic Conversion issues, where when doing `signed + unsigned`, both operands get converted to unsigned when we expected "delta"-ing behavior
     // Note that even though `signed = signed + unsigned` does work if both operands have the same width due to wraparound arithmetic, and the fact that the rhs is immediately converted to signed
     // But expressions like `(signed + unsigned) > constant` breaks our intuition because the lhs stays unsigned before entering operator>
     int64_t idx; // Buffer index
 
-    explicit GapBufferIterator(TextBuffer& buffer)
+    explicit GapBufferIterator(GapBuffer& buffer)
         : obj{ &buffer }
         , idx{ 0 } {}
 
@@ -146,7 +146,7 @@ void ReallocateBuffer(ImWchar*& oldBuffer, size_t newSize) {
     oldBuffer = (ImWchar*)realloc(oldBuffer, sizeof(ImWchar) * newSize);
 }
 
-void MoveGap(TextBuffer& buf, size_t newIdx) {
+void MoveGap(GapBuffer& buf, size_t newIdx) {
     size_t oldIdx = buf.frontSize;
     if (oldIdx == newIdx) return;
 
@@ -167,7 +167,7 @@ void MoveGap(TextBuffer& buf, size_t newIdx) {
     buf.frontSize = newIdx;
 }
 
-void IncreaseGap(TextBuffer& buf, size_t newGapSize = 0) {
+void IncreaseGap(GapBuffer& buf, size_t newGapSize = 0) {
     // Some assumptions:
     // - Increasing the gap size means the user is editing this buffer, which means they'll probably edit it some more
     // - Hence, it's likely that this buffer will be reallocated multiple times in the future
@@ -204,7 +204,7 @@ struct TextRun {
 
 struct ParseInput {
     // [Required] Source buffer to parse markdown from.
-    const TextBuffer* tb;
+    const GapBuffer* tb;
 };
 
 struct ParseOutput {
@@ -522,7 +522,7 @@ struct LayoutInput {
     // [Required] Markdown styling.
     const MarkdownStylesheet* styles;
     // [Required] Source buffer which generated the TextRun's.
-    const TextBuffer* tb;
+    const GapBuffer* tb;
     // [Required]
     std::span<const TextRun> textRuns;
     // [Optional] Width to wrap lines at; set to 0.0f to ignore line width.
@@ -605,7 +605,7 @@ bool IsWordBreaking(ImWchar a, ImWchar b) {
 //
 // # Notes on terminology
 // "move towards" means to adjust the index forwards or backwards to the desired location, depending on `delta` being positive or negative.
-int64_t CalcAdjacentWordPos(TextBuffer& buf, int64_t index, int delta) {
+int64_t CalcAdjacentWordPos(GapBuffer& buf, int64_t index, int delta) {
     GapBufferIterator it(buf);
     it += index;
 
@@ -636,13 +636,13 @@ std::pair<int64_t, int64_t> FindLineWrapBoundsForIndex(const TextEdit& te, int64
 }
 } // namespace
 
-Ionl::TextBuffer::TextBuffer()
+Ionl::GapBuffer::GapBuffer()
     : buffer{ AllocateBuffer(256) }
     , bufferSize{ 256 }
     , frontSize{ 0 }
     , gapSize{ 256 } {}
 
-Ionl::TextBuffer::TextBuffer(std::string_view content)
+Ionl::GapBuffer::GapBuffer(std::string_view content)
     // NOTE: these set of parameters are technically invalid, but they get immediately overridden by UpdateContent() which doesn't care
     : buffer{ nullptr }
     , bufferSize{ 0 }
@@ -651,7 +651,7 @@ Ionl::TextBuffer::TextBuffer(std::string_view content)
     UpdateContent(content);
 }
 
-std::string Ionl::TextBuffer::ExtractContent() const {
+std::string Ionl::GapBuffer::ExtractContent() const {
     auto frontBegin = buffer;
     auto frontEnd = buffer + frontSize;
     auto backBegin = buffer + frontSize + gapSize;
@@ -670,7 +670,7 @@ std::string Ionl::TextBuffer::ExtractContent() const {
     return result;
 }
 
-void Ionl::TextBuffer::UpdateContent(std::string_view content) {
+void Ionl::GapBuffer::UpdateContent(std::string_view content) {
     auto strBegin = &*content.begin();
     auto strEnd = &*content.end();
     auto minBufferSize = ImTextCountCharsFromUtf8(strBegin, strEnd);
@@ -687,7 +687,7 @@ void Ionl::TextBuffer::UpdateContent(std::string_view content) {
     ImTextStrFromUtf8NoNullTerminate(buffer, bufferSize, strBegin, strEnd);
 }
 
-Ionl::TextBuffer::~TextBuffer() {
+Ionl::GapBuffer::~GapBuffer() {
     free(buffer);
 }
 

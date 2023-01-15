@@ -19,6 +19,10 @@
 #include <iostream>
 #include <string>
 
+#define IONL_SHOW_DEBUG_INFO
+#define IONL_SHOW_DEBUG_EXAMPLES
+
+using namespace std::literals;
 using namespace Ionl;
 
 static void GlfwErrorCallback(int error, const char* description) {
@@ -331,17 +335,35 @@ static void ShowAppViews(AppState& as) {
         ImGui::End();
     }
 
-    ImGui::Begin("TextEdit test");
-    using namespace std::string_view_literals;
-    static GapBuffer buffer("# Heading 1\n## Heading 2 -- and this is a long heading, likely to wrap\n__This is an extremely long text line with underline. A long long time ago, when the people at the var end of the world still spoke and began their stories with 'in the near future', there was...__\nTest **bold** _italics_ __underline__ ~~strikethrough~~\n`monospace`\n**`formatted`_`monospace`_**\n`hello`__`more`~~`more`~~__\nLorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce nulla nibh, dictum id enim at, laoreet mattis lacus. Nullam porta justo lorem. Quisque commodo massa at lacus bibendum, sed porttitor quam vestibulum. Integer ultricies diam lectus, in aliquam est rutrum eu. Sed eu purus leo. Maecenas non massa ultricies, volutpat mi vitae, aliquam ante. Fusce tristique, massa nec consectetur sagittis, neque ipsum pulvinar ligula, vitae condimentum nulla mi nec leo. Nullam sit amet rutrum justo, vel porttitor ipsum. Vestibulum id viverra mauris. Quisque eu porta orci, eget rhoncus nibh. Cras laoreet, odio vestibulum lobortis mattis, lectus nunc accumsan lorem, quis sollicitudin nisi augue ut tortor. Mauris feugiat vehicula augue ac condimentum. Proin tincidunt condimentum nunc eu aliquam. Duis in sapien sem. Pellentesque pellentesque risus ac luctus auctor. "sv);
-    static TextEdit textEdit = []() {
-        TextEdit res;
-        res.id = ImGui::GetID("test");
-        res.buffer = &buffer;
-        return res;
-    }();
-    textEdit.Show();
+#ifdef IONL_SHOW_DEBUG_EXAMPLES
+    ImGui::Begin("TextEdit debug example");
+    {
+        constexpr std::string_view kExampleText = R"""(
+# Heading 1
+## Heading 2 -- and this is a long heading, likely to wrap
+__This is an extremely long text line with underline. A long long time ago, when the people at the var end of the world still spoke and began their stories with 'in the near future', there was...__
+Test **bold** _italics_ __underline__ ~~strikethrough~~
+`monospace`
+**`formatted`_`monospace`_**
+`hello`__`more`~~`more`~~__
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce nulla nibh, dictum id enim at, laoreet mattis lacus. Nullam porta justo lorem. Quisque commodo massa at lacus bibendum, sed porttitor quam vestibulum. Integer ultricies diam lectus, in aliquam est rutrum eu. Sed eu purus leo. Maecenas non massa ultricies, volutpat mi vitae, aliquam ante. Fusce tristique, massa nec consectetur sagittis, neque ipsum pulvinar ligula, vitae condimentum nulla mi nec leo. Nullam sit amet rutrum justo, vel porttitor ipsum. Vestibulum _id viverra mauris. Quisque eu porta orci, eget rhoncus nibh. Cras laoreet, odio vestibulum lobortis mattis, lectus nunc accumsan lorem, quis sollicitudin nisi augue ut tortor. Mauris feugiat vehicula augue ac condimentum. Proin tincidunt condimentum nunc eu aliquam. Duis in sapien sem. Pellentesque pellentesque risus ac luctus auctor.
+```cpp
+// code block
+#include <iostream>
+int main() {
+    std::cout << "Hello, world\n";
+    return 0;
+}
+```
+)"""sv.substr(1); // Remove initial \n
+
+        static auto textBuffer = TextBuffer(GapBuffer(kExampleText));
+        static auto textEdit = TextEdit(ImGui::GetID("TextEdit"), textBuffer);
+
+        textEdit.Show();
+    }
     ImGui::End();
+#endif
 }
 
 int main() {
@@ -394,38 +416,29 @@ int main() {
     // TODO do we want to include this only in debug builds?
     io.Fonts->AddFontDefault();
 
-    /*
+    gMarkdownStylesheet.linePadding = 0.0f;
+    gMarkdownStylesheet.paragraphPadding = 4.0f;
+
     // TODO proper discovery code
-    float fontSize = 18.0f;
-    gTextStyles.faceFonts[MF_Proportional] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.faceFonts[MF_ProportionalItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Italic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.faceFonts[MF_ProportionalBold] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.faceFonts[MF_ProportionalBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.faceFonts[MF_Monospace] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Regular.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.faceFonts[MF_MonospaceItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Italic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.faceFonts[MF_MonospaceBold] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Bold.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.faceFonts[MF_MonospaceBoldItalic] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-BoldItalic.ttf", fontSize, nullptr, io.Fonts->GetGlyphRangesDefault());
-    gTextStyles.regularFontSize = fontSize;
+    constexpr float kBaseFontSize = 18.0f;
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, false, false);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Italic.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, false, true);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, true, false);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, true, true);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Regular.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, false, false);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Italic.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, false, true);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Bold.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, true, false);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-BoldItalic.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, true, true);
 
-    gTextStyles.faceColors[MF_Proportional] = IM_COL32(255, 255, 255, 255);
-    gTextStyles.faceColors[MF_ProportionalItalic] = IM_COL32(255, 255, 255, 255);
-    gTextStyles.faceColors[MF_ProportionalBold] = IM_COL32(255, 255, 255, 255);
-    gTextStyles.faceColors[MF_ProportionalBoldItalic] = IM_COL32(255, 255, 255, 255);
-    gTextStyles.faceColors[MF_Monospace] = IM_COL32(176, 215, 221, 255);
-    gTextStyles.faceColors[MF_MonospaceItalic] = IM_COL32(176, 215, 221, 255);
-    gTextStyles.faceColors[MF_MonospaceBold] = IM_COL32(176, 215, 221, 255);
-    gTextStyles.faceColors[MF_MonospaceBoldItalic] = IM_COL32(176, 215, 221, 255);
-
-    auto InitHeadingFont = [&](MarkdownFace variant, float scale) {
-        gTextStyles.faceFonts[variant] = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", fontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
-        gTextStyles.faceColors[variant] = gTextStyles.faceColors[MF_Proportional];
+    auto InitHeadingFont = [&](int headingLevel, float scale) {
+        auto font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", kBaseFontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
+        gMarkdownStylesheet.SetHeadingFace(MarkdownFace{ .font = font }, headingLevel);
     };
-    InitHeadingFont(MF_Heading1, 2.5f);
-    InitHeadingFont(MF_Heading2, 2.0f);
-    InitHeadingFont(MF_Heading3, 1.5f);
-    InitHeadingFont(MF_Heading4, 1.2f);
-    InitHeadingFont(MF_Heading5, 1.0f);
-    */
+    InitHeadingFont(1, 2.5f);
+    InitHeadingFont(2, 2.0f);
+    InitHeadingFont(3, 1.5f);
+    InitHeadingFont(4, 1.2f);
+    InitHeadingFont(5, 1.0f);
 
     AppState as;
     double lastWriteTime = 0.0;

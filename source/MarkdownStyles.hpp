@@ -32,7 +32,12 @@ struct TextStyle {
 };
 
 struct MarkdownFace {
+    // [Required]
     ImFont* font = nullptr;
+    // [Optional]
+    // Case: == 0, indicating ImGuiCol_Text should be used
+    // Case: any other value, indicating should be used directly as the color
+    ImU32 color = 0;
 };
 
 struct MarkdownStylesheet {
@@ -40,9 +45,15 @@ struct MarkdownStylesheet {
     MarkdownFace headingFaces[5 /*5 different levels of heading*/] = {};
 
     float linePadding = 0.0f;
-    float paragraphPadding = 4.0f;
+    float paragraphPadding = 0.0f;
+
+    void SetRegularFace(MarkdownFace face, bool isMonospace, bool isBold, bool isItalic);
+    void SetHeadingFace(MarkdownFace face, int level);
 
     const MarkdownFace& LookupFace(const TextStyle& style) const;
 };
+
+// Global, shared, and default instance of Markdown styling
+extern MarkdownStylesheet gMarkdownStylesheet;
 
 } // namespace Ionl

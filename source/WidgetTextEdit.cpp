@@ -13,8 +13,6 @@
 
 using namespace std::literals;
 
-Ionl::TextStyles Ionl::gTextStyles;
-
 namespace {
 using namespace Ionl;
 
@@ -139,11 +137,17 @@ private:
     GapBufferIterator()
         : obj{ nullptr }, idx{ 0 } {}
 };
+
 ImWchar* AllocateBuffer(size_t size) {
     return (ImWchar*)malloc(sizeof(ImWchar) * size);
 }
+
 void ReallocateBuffer(ImWchar*& oldBuffer, size_t newSize) {
     oldBuffer = (ImWchar*)realloc(oldBuffer, sizeof(ImWchar) * newSize);
+}
+
+void DeallocateBuffer(ImWchar* buffer) {
+    free(buffer);
 }
 
 void MoveGap(GapBuffer& buf, size_t newIdx) {
@@ -196,21 +200,29 @@ void IncreaseGap(GapBuffer& buf, size_t newGapSize = 0) {
         oldBackSize);
 }
 
-struct TextRun {
-    int64_t begin;
-    int64_t end;
-    TextStyle style;
-};
-
 struct ParseInput {
     // [Required] Source buffer to parse markdown from.
-    const GapBuffer* tb;
+    const GapBuffer* src;
 };
 
 struct ParseOutput {
     std::vector<TextRun> textRuns;
 };
 
+// Input text:
+//     Test **bold _and italic __text__ with_ strangling_underscores** **_nest_** finishing words
+// Expected output TextRun's:
+//     ----- "Test "
+//     b---- "**bold "
+//     bi--- "_and italic "
+//     biu-- "__text__"
+//     bi--- " with_"
+//     b---- " strangling_underscores**"
+//     ----- " "
+//     b---- "**"
+//     bi--- "_nest_"
+//     b---- "**"
+//     ----- " finishing words"
 ParseOutput ParseMarkdownBuffer(const ParseInput& in) {
     ParseOutput out;
 
@@ -257,8 +269,8 @@ ParseOutput ParseMarkdownBuffer(const ParseInput& in) {
 
     // Insert a single TextRun into `out.textRuns`
     auto outputTextRun = [&](TextRun run) {
-        auto gapBegin = in.tb->frontSize;
-        auto gapEnd = in.tb->frontSize + in.tb->gapSize;
+        auto gapBegin = in.src->frontSize;
+        auto gapEnd = in.src->frontSize + in.src->gapSize;
         if (run.begin < gapBegin && run.end > gapEnd) {
             // TextRun spans over the gap, we need to split it
             TextRun& frontRun = run;
@@ -327,10 +339,10 @@ ParseOutput ParseMarkdownBuffer(const ParseInput& in) {
     // When the parser initiates, "reader" is advanced (thus filling the lookahead buffer) until "head" reaches 0 (points to the first valid character), or until "reader" reaches end of the input buffer.
 
     std::pair<int64_t, int64_t> sourceSegments[] = {
-        { in.tb->GetFrontBegin(), in.tb->GetFrontSize() },
-        { in.tb->GetBackBegin(), in.tb->GetBackSize() },
+        { in.src->GetFrontBegin(), in.src->GetFrontSize() },
+        { in.src->GetBackBegin(), in.src->GetBackSize() },
         // The dummy segment at the very end for "head" to advance until the very end of source buffer
-        { in.tb->GetBackEnd(), kVisionSize - 1 },
+        { in.src->GetBackEnd(), kVisionSize - 1 },
     };
     int skipCount = 0;
     for (auto it = std::begin(sourceSegments); it != std::end(sourceSegments); ++it) {
@@ -344,7 +356,7 @@ ParseOutput ParseMarkdownBuffer(const ParseInput& in) {
         while (reader < segmentEnd) {
             std::shift_left(std::begin(visionBuffer), std::end(visionBuffer), 1);
             if (!isLastSourceSegment) {
-                visionBuffer[kVisionSize - 1] = in.tb->buffer[reader];
+                visionBuffer[kVisionSize - 1] = in.src->buffer[reader];
             } else {
                 visionBuffer[kVisionSize - 1] = '\0';
             }
@@ -387,7 +399,7 @@ ParseOutput ParseMarkdownBuffer(const ParseInput& in) {
                 if (lastSeenIdx == kInvalidIdx) {
                     // Opening control sequence
                     seenControlSeqs.push_back(ControlSequence{
-                        .begin = AdjustBufferIndex(*in.tb, reader, -kVisionSize),
+                        .begin = AdjustBufferIndex(*in.src, reader, -kVisionSize),
                         .pattern = pattern,
                         .patternFlag = patternFlag,
                     });
@@ -395,7 +407,7 @@ ParseOutput ParseMarkdownBuffer(const ParseInput& in) {
                     // Closing control sequence
 
                     auto& lastSeen = seenControlSeqs[lastSeenIdx];
-                    lastSeen.end = AdjustBufferIndex(*in.tb, reader, -kVisionSize + pattern.size());
+                    lastSeen.end = AdjustBufferIndex(*in.src, reader, -kVisionSize + pattern.size());
 
                     // Remove the record of this control seq (and everything after because they can't possibly be matched, since we disallow intermingled syntax like *foo_bar*_)
                     size_t lastUnclosedControlSeq = seenControlSeqs.size();
@@ -443,10 +455,10 @@ ParseOutput ParseMarkdownBuffer(const ParseInput& in) {
     // Output the last TextRun from end of the last formatted stack to end of buffer, if there is any
     if (!out.textRuns.empty()) {
         auto& last = out.textRuns.back();
-        if (last.end != in.tb->bufferSize) {
+        if (last.end != in.src->bufferSize) {
             outputTextRun(TextRun{
                 .begin = last.end,
-                .end = in.tb->bufferSize,
+                .end = in.src->bufferSize,
             });
         }
     }
@@ -510,19 +522,11 @@ void PrintDebugTextRuns(std::string_view source, std::span<const TextRun> textRu
 }
 #endif
 
-struct GlyphRun {
-    TextRun tr;
-
-    // Position of the first glyph in this run, in text canvas space
-    ImVec2 pos;
-    float horizontalAdvance = 0.0f;
-};
-
 struct LayoutInput {
     // [Required] Markdown styling.
     const MarkdownStylesheet* styles;
     // [Required] Source buffer which generated the TextRun's.
-    const GapBuffer* tb;
+    const GapBuffer* src;
     // [Required]
     std::span<const TextRun> textRuns;
     // [Optional] Width to wrap lines at; set to 0.0f to ignore line width.
@@ -543,27 +547,28 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
     for (const auto& textRun : in.textRuns) {
         auto& face = in.styles->LookupFace(textRun.style);
 
-        const ImWchar* beg = &in.tb->buffer[textRun.begin];
-        const ImWchar* end = &in.tb->buffer[textRun.end];
+        const ImWchar* beg = &in.src->buffer[textRun.begin];
+        const ImWchar* end = &in.src->buffer[textRun.end];
         // Try to lay this [beg,end) on current line, and if we can't, retry with [remaining,end) until we are done with this TextRun
         while (true) {
             const ImWchar* remaining;
             // `wrap_width` is for automatically laying the text in multiple lines (and return the size of all lines).
             // We want to perform line wrapping ourselves, so we use `max_width` to instruct ImGui to stop after reaching the line width.
             auto runDim = face.font->CalcTextSize(face.font->FontSize, in.viewportWidth, 0.0f, beg, end, &remaining);
-            currPos.x += runDim.x;
-            currLineDim.x += runDim.x;
-            currLineDim.y = ImMax(currLineDim.y, runDim.y);
 
             GlyphRun glyphRun;
             glyphRun.tr = textRun;
-            glyphRun.tr.begin = std::distance(in.tb->begin(), beg);
-            glyphRun.tr.end = std::distance(in.tb->begin(), remaining);
+            glyphRun.tr.begin = std::distance(in.src->begin(), beg);
+            glyphRun.tr.end = std::distance(in.src->begin(), remaining);
             glyphRun.pos = currPos;
             glyphRun.horizontalAdvance = runDim.x;
             out.glyphRuns.push_back(std::move(glyphRun));
 
-            if (remaining == in.tb->end()) {
+            currPos.x += runDim.x;
+            currLineDim.x += runDim.x;
+            currLineDim.y = ImMax(currLineDim.y, runDim.y);
+
+            if (remaining == end) {
                 // Finished processing this TextRun
                 break;
             }
@@ -584,6 +589,36 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
     out.boundingBox.y += currLineDim.y;
 
     return out;
+}
+
+void RefreshTextBufferCachedData(TextBuffer& tb) {
+    auto res = ParseMarkdownBuffer({
+        .src = &tb.gapBuffer,
+    });
+
+    tb.textRuns = std::move(res.textRuns);
+    tb.cacheDataVersion += 1;
+}
+
+void TryRefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
+    TextBuffer& tb = *te._tb;
+
+    if (te._cachedDataVersion == tb.cacheDataVersion) {
+        return;
+    }
+    // There must be a bug if we somehow have a newer version in the TextEdit (downstream) than its corresponding TextBuffer (upstream)
+    assert(te._cachedDataVersion < tb.cacheDataVersion);
+
+    auto res = LayMarkdownTextRuns({
+        .styles = &gMarkdownStylesheet,
+        .src = &tb.gapBuffer,
+        .textRuns = std::span(tb.textRuns),
+        .viewportWidth = viewportWidth,
+    });
+
+    te._cachedGlyphRuns = std::move(res.glyphRuns);
+    te._cachedContentHeight = res.boundingBox.y;
+    te._cachedDataVersion = tb.cacheDataVersion;
 }
 
 bool IsCharAPartOfWord(ImWchar c) {
@@ -626,7 +661,7 @@ std::pair<int64_t, int64_t> FindLineWrapBoundsForIndex(const TextEdit& te, int64
         u = *ub;
     } else if (ub == te._wrapPoints.end()) {
         l = *(ub - 1);
-        u = te.buffer->GetContentSize();
+        u = te._tb->gapBuffer.GetContentSize();
     } else {
         l = *(ub - 1);
         u = *ub;
@@ -649,6 +684,36 @@ Ionl::GapBuffer::GapBuffer(std::string_view content)
     , frontSize{ 0 }
     , gapSize{ 0 } {
     UpdateContent(content);
+}
+
+Ionl::GapBuffer::GapBuffer(GapBuffer&& that)
+    : buffer{ that.buffer }
+    , bufferSize{ that.bufferSize }
+    , frontSize{ that.frontSize }
+    , gapSize{ that.gapSize } //
+{
+    that.buffer = nullptr;
+    that.bufferSize = 0;
+    that.frontSize = 0;
+    that.gapSize = 0;
+}
+
+Ionl::GapBuffer& Ionl::GapBuffer::operator=(GapBuffer&& that) {
+    if (this == &that) {
+        return *this;
+    }
+
+    DeallocateBuffer(this->buffer);
+    this->buffer = std::exchange(that.buffer, nullptr);
+    this->bufferSize = std::exchange(that.bufferSize, 0);
+    this->frontSize = std::exchange(that.frontSize, 0);
+    this->gapSize = std::exchange(that.gapSize, 0);
+
+    return *this;
+}
+
+Ionl::GapBuffer::~GapBuffer() {
+    DeallocateBuffer(buffer);
 }
 
 std::string Ionl::GapBuffer::ExtractContent() const {
@@ -687,8 +752,16 @@ void Ionl::GapBuffer::UpdateContent(std::string_view content) {
     ImTextStrFromUtf8NoNullTerminate(buffer, bufferSize, strBegin, strEnd);
 }
 
-Ionl::GapBuffer::~GapBuffer() {
-    free(buffer);
+Ionl::TextEdit::TextEdit(ImGuiID id, TextBuffer& tb)
+    : _id{ id }
+    , _tb{ &tb } //
+{
+}
+
+Ionl::TextBuffer::TextBuffer(GapBuffer buf)
+    : gapBuffer{ std::move(buf) } //
+{
+    RefreshTextBufferCachedData(*this);
 }
 
 void Ionl::TextEdit::Show() {
@@ -700,34 +773,37 @@ void Ionl::TextEdit::Show() {
     }
 
     auto contentRegionAvail = ImGui::GetContentRegionAvail();
-    auto drawList = window->DrawList;
 
-    float totalHeight = 10.0f; // TODO
+    // Performs text layout if necessary
+    // -> updates _cachedGlyphRuns
+    // -> updates _cachedContentHeight
+    TryRefreshTextEditCachedData(*this, contentRegionAvail.x);
 
-    ImVec2 widgetSize(contentRegionAvail.x, totalHeight);
+    ImVec2 widgetSize(contentRegionAvail.x, _cachedContentHeight);
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + widgetSize };
     ImGui::ItemSize(bb);
-    if (!ImGui::ItemAdd(bb, id)) {
+    if (!ImGui::ItemAdd(bb, _id)) {
         return;
     }
 
     // FIXME: or ImGui::IsItemHovered()?
-    bool hovered = ImGui::ItemHoverable(bb, id);
+    bool hovered = ImGui::ItemHoverable(bb, _id);
     bool userClicked = hovered && io.MouseClicked[ImGuiMouseButton_Left];
 
     auto activeId = ImGui::GetActiveID();
 
-    if (activeId != id && userClicked) {
-        activeId = id;
+    if (activeId != _id && userClicked) {
+        activeId = _id;
 
         // Adapted from imgui_widget.cpp Imgui::InputTextEx()
 
-        ImGui::SetActiveID(id, window);
-        ImGui::SetFocusID(id, window);
+        ImGui::SetActiveID(_id, window);
+        ImGui::SetFocusID(_id, window);
         ImGui::FocusWindow(window);
 
         // Declare our inputs
-        // TODO do we need to declare other keys like Backspace? ImGui::InputTextEx() uses them but doesn't declare
+        // NOTE: ImGui::InputTextEx() uses keys like backspace but doesn't declare
+        //       A quick look into the code shows that ActiveIdUsingKeyInputMask is only used by the nav system, and that only cares about the keys right at the moment
         ImGui::SetActiveIdUsingKey(ImGuiKey_LeftArrow);
         ImGui::SetActiveIdUsingKey(ImGuiKey_RightArrow);
         ImGui::SetActiveIdUsingKey(ImGuiKey_UpArrow);
@@ -738,10 +814,11 @@ void Ionl::TextEdit::Show() {
         ImGui::SetActiveIdUsingKey(ImGuiKey_End);
     }
 
-    int64_t bufContentSize = buffer->GetContentSize();
+    int64_t bufContentSize = _tb->gapBuffer.GetContentSize();
 
+    // TODO update _cursorAssociatedFont and _cursorVisualOffset
     // Process keyboard inputs
-    if (activeId == id && !g.ActiveIdIsJustActivated) {
+    if (activeId == _id && !g.ActiveIdIsJustActivated) {
         bool isOSX = io.ConfigMacOSXBehaviors;
         bool isMovingWord = isOSX ? io.KeyAlt : io.KeyCtrl;
         bool isShortcutKey = isOSX ? (io.KeyMods == ImGuiMod_Super) : (io.KeyMods == ImGuiMod_Ctrl);
@@ -750,7 +827,7 @@ void Ionl::TextEdit::Show() {
             if (_cursorIsAtWrapPoint && !_cursorAffinity) {
                 _cursorAffinity = true;
             } else {
-                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, -1) : -1;
+                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, -1) : -1;
                 _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
 
@@ -764,7 +841,7 @@ void Ionl::TextEdit::Show() {
             if (_cursorIsAtWrapPoint && _cursorAffinity) {
                 _cursorAffinity = false;
             } else {
-                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(*buffer, _cursorIdx, +1) : +1;
+                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, +1) : +1;
                 _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
 
@@ -802,7 +879,7 @@ void Ionl::TextEdit::Show() {
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
 
                 _cursorIsAtWrapPoint = true;
-                bool lineIsHardWrapped = u == bufContentSize || (*buffer)[u] == '\n';
+                bool lineIsHardWrapped = u == bufContentSize || _tb->gapBuffer.buffer[u] == '\n';
                 _cursorAffinity = !lineIsHardWrapped;
             }
         } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
@@ -857,12 +934,29 @@ void Ionl::TextEdit::Show() {
             }
 
             io.InputQueueCharacters.resize(0);
+
+            // NOTE: this TextEdit's cache will be refreshed next frame
+            RefreshTextBufferCachedData(*_tb);
         }
+    }
+
+    auto drawList = window->DrawList;
+
+    auto styleTextColor = ImGui::GetColorU32(ImGuiCol_Text);
+
+    // Draw text
+    for (auto& glyphRun : _cachedGlyphRuns) {
+        auto& face = gMarkdownStylesheet.LookupFace(glyphRun.tr.style);
+
+        auto absPos = bb.Min + glyphRun.pos;
+        auto font = face.font;
+        auto color = face.color == 0 ? styleTextColor : face.color;
+        drawList->AddText(font, font->FontSize, absPos, color, &_tb->gapBuffer.buffer[glyphRun.tr.begin], &_tb->gapBuffer.buffer[glyphRun.tr.end]);
     }
 
     // Draw cursor and selection
     // TODO move drawing cursor blinking outside the ImGui loop
-    if (activeId == id) {
+    if (activeId == _id) {
         _cursorAnimTimer += io.DeltaTime;
 
         bool cursorVisible = ImFmod(_cursorAnimTimer, 1.20f) <= 0.80f;
@@ -881,17 +975,22 @@ void Ionl::TextEdit::Show() {
     // TODO handle up/down arrow at edge of the document should move to prev/next bullet point
 
     // Release focus when we click outside
-    if (activeId == id && io.MouseClicked[ImGuiMouseButton_Left] && !hovered) {
+    if (activeId == _id && io.MouseClicked[ImGuiMouseButton_Left] && !hovered) {
         ImGui::ClearActiveID();
     }
 
 #ifdef IONL_SHOW_DEBUG_BOUNDING_BOXES
     auto dl = ImGui::GetForegroundDrawList();
     dl->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
-    dl->AddRect(bb.Min, bb.Min + contentRegionAvail, IM_COL32(255, 0, 255, 255));
+    for (auto& glyphRun : _cachedGlyphRuns) {
+        auto& face = gMarkdownStylesheet.LookupFace(glyphRun.tr.style);
+        auto absPos = bb.Min + glyphRun.pos;
+        dl->AddRect(absPos, ImVec2(absPos.x + glyphRun.horizontalAdvance, absPos.y + face.font->FontSize), IM_COL32(255, 0, 255, 255));
+    }
 #endif
 
 #ifdef IONL_SHOW_DEBUG_INFO
+    ImGui::PushID(_id);
     if (ImGui::CollapsingHeader("TextEdit debug")) {
         ImGui::Text("_cursorIdx = %zu", _cursorIdx);
         ImGui::Text("_anchorIdx = %zu", _cursorIdx);
@@ -925,6 +1024,7 @@ void Ionl::TextEdit::Show() {
         ImGui::TextUnformatted(wrapPointText);
         ImGui::PopTextWrapPos();
     }
+    ImGui::PopID();
 #endif
 }
 

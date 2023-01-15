@@ -24,6 +24,8 @@ struct GapBuffer {
 
     GapBuffer();
     GapBuffer(std::string_view content);
+    GapBuffer(GapBuffer&&);
+    GapBuffer& operator=(GapBuffer&&);
     ~GapBuffer();
 
     ImWchar* begin() { return buffer; }
@@ -56,12 +58,37 @@ struct GapBuffer {
     void UpdateContent(std::string_view content);
 };
 
+struct TextRun {
+    int64_t begin;
+    int64_t end;
+    TextStyle style;
+};
+
+struct TextBuffer {
+    // Canonical data
+    GapBuffer gapBuffer;
+
+    // Cached data derived from canonical data
+    // Invalidation and recomputation should be done by whoever modifies `gapBuffer`.
+    std::vector<TextRun> textRuns;
+    int cacheDataVersion = 0;
+
+    TextBuffer(GapBuffer buf);
+};
+
+struct GlyphRun {
+    TextRun tr;
+
+    // Position of the first glyph in this run, in text canvas space
+    ImVec2 pos;
+    float horizontalAdvance = 0.0f;
+};
+
 /// - Spans from ImGui::GetCursorPos().x, all the way to the right at max content width
 /// - Height depends on the text inside
 struct TextEdit {
-    /* [In] */ ImGuiID id;
-    /* [In] */ float linePadding = 0.0f;
-    /* [In] */ GapBuffer* buffer;
+    TextBuffer* _tb;
+    std::vector<GlyphRun> _cachedGlyphRuns;
 
     // Generates during render loop, a list of character indices which line wraps (both soft and hard wraps)
     // This vector should always be sorted.
@@ -101,12 +128,18 @@ struct TextEdit {
     ImFont* _cursorAssociatedFont = nullptr;
     float _cursorAnimTimer = 0.0f;
 
+    ImGuiID _id;
+    float _cachedContentHeight = 0.0f;
+    int _cachedDataVersion = 0;
+
     // Whether the cursor is on a wrapping point (end of a soft wrapped line).
     bool _cursorIsAtWrapPoint = false;
 
     // false: the cursor is after the wrap (next line), or that no soft wrap is applied
     // true: the cursor is before the wrap (prev line)
     bool _cursorAffinity = false;
+
+    TextEdit(ImGuiID id, TextBuffer& textBuffer);
 
     void Show();
 

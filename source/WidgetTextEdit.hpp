@@ -4,7 +4,8 @@
 // - Unicode/language-aware cursor movement (TODO do we need to grab ICU for this?)
 #pragma once
 
-#include "MarkdownStyles.hpp"
+#include "GapBuffer.hpp"
+#include "Markdown.hpp"
 #include "imgui.h"
 
 #include <string>
@@ -16,52 +17,12 @@ namespace Ionl {
 // TODO DPI handling?
 // TODO figure out font caching or SDF based rendering: generating a separate atlas for each heading type is really costly on VRAM
 
-struct GapBuffer {
-    ImWchar* buffer;
-    int64_t bufferSize;
-    int64_t frontSize;
-    int64_t gapSize;
+struct GlyphRun {
+    TextRun tr;
 
-    GapBuffer();
-    GapBuffer(std::string_view content);
-    GapBuffer(GapBuffer&&);
-    GapBuffer& operator=(GapBuffer&&);
-    ~GapBuffer();
-
-    ImWchar* begin() { return buffer; }
-    ImWchar* end() { return buffer + bufferSize; }
-
-    const ImWchar* begin() const { return buffer; }
-    const ImWchar* end() const { return buffer + bufferSize; }
-
-    const ImWchar* cbegin() const { return buffer; }
-    const ImWchar* cend() const { return buffer + bufferSize; }
-
-    int64_t GetContentSize() const { return bufferSize - gapSize; }
-
-    int64_t GetFrontBegin() const { return 0; }
-    int64_t GetFrontEnd() const { return GetGapBegin(); }
-    int64_t GetFrontSize() const { return GetFrontEnd() - GetFrontBegin(); }
-
-    int64_t GetGapBegin() const { return frontSize; }
-    int64_t GetGapEnd() const { return GetBackBegin(); }
-    int64_t GetGapSize() const { return GetGapEnd() - GetGapBegin(); }
-
-    int64_t GetBackBegin() const { return frontSize + gapSize; }
-    int64_t GetBackEnd() const { return bufferSize; }
-    int64_t GetBackSize() const { return GetBackEnd() - GetBackBegin(); }
-
-    const ImWchar& operator[](size_t i) const { return i > frontSize ? buffer[i + gapSize] : buffer[i]; }
-    ImWchar& operator[](size_t i) { return const_cast<ImWchar&>(const_cast<const GapBuffer&>(*this)[i]); }
-
-    std::string ExtractContent() const;
-    void UpdateContent(std::string_view content);
-};
-
-struct TextRun {
-    int64_t begin;
-    int64_t end;
-    TextStyle style;
+    // Position of the first glyph in this run, in text canvas space
+    ImVec2 pos;
+    float horizontalAdvance = 0.0f;
 };
 
 struct TextBuffer {
@@ -74,14 +35,6 @@ struct TextBuffer {
     int cacheDataVersion = 0;
 
     TextBuffer(GapBuffer buf);
-};
-
-struct GlyphRun {
-    TextRun tr;
-
-    // Position of the first glyph in this run, in text canvas space
-    ImVec2 pos;
-    float horizontalAdvance = 0.0f;
 };
 
 /// - Spans from ImGui::GetCursorPos().x, all the way to the right at max content width

@@ -1,6 +1,10 @@
 #pragma once
 
+#include "GapBuffer.hpp"
 #include "imgui.h"
+
+#include <cstdint>
+#include <vector>
 
 namespace Ionl {
 
@@ -17,6 +21,7 @@ enum TextStyleType {
 };
 
 int CalcHeadingLevel(TextStyleType type);
+TextStyleType MakeHeadingLevel(int level);
 bool IsHeading(TextStyleType type);
 
 struct TextStyle {
@@ -55,5 +60,20 @@ struct MarkdownStylesheet {
 
 // Global, shared, and default instance of Markdown styling
 extern MarkdownStylesheet gMarkdownStylesheet;
+
+struct TextRun {
+    int64_t begin; // Buffer index
+    int64_t end; // Buffer index
+    TextStyle style;
+};
+
+struct MdParseInput {
+    // [Required] Source buffer to parse markdown from.
+    const GapBuffer* src;
+};
+struct MdParseOutput {
+    std::vector<TextRun> textRuns;
+};
+MdParseOutput ParseMarkdownBuffer(const MdParseInput& in);
 
 } // namespace Ionl

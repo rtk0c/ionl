@@ -9,11 +9,11 @@ using namespace std::literals;
 
 int Ionl::CalcHeadingLevel(TextStyleType type) {
     auto n = (int)type;
-    return n - (int)TextStyleType::Title_BEGIN;
+    return n - (int)TextStyleType::Title_BEGIN + 1;
 }
 
 Ionl::TextStyleType Ionl::MakeHeadingLevel(int level) {
-    return (TextStyleType)((int)TextStyleType::Title_BEGIN + level);
+    return (TextStyleType)((int)TextStyleType::Title_BEGIN + level - 1);
 }
 
 bool Ionl::IsHeading(TextStyleType type) {

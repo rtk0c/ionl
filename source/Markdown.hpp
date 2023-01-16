@@ -8,7 +8,7 @@
 
 namespace Ionl {
 
-enum TextStyleType {
+enum class TextStyleType {
     Regular,
     Url,
     Title_BEGIN,

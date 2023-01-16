@@ -19,8 +19,8 @@
 #include <iostream>
 #include <string>
 
-#define IONL_SHOW_DEBUG_INFO
-#define IONL_SHOW_DEBUG_EXAMPLES
+#define IONL_SHOW_DEBUG_INFO IONL_DEBUG_FEATURES
+#define IONL_SHOW_DEBUG_EXAMPLES IONL_DEBUG_FEATURES
 
 using namespace std::literals;
 using namespace Ionl;

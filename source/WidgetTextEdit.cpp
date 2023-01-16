@@ -8,8 +8,8 @@
 #include <utility>
 
 // Development/debugging helpers
-// #define IONL_SHOW_DEBUG_BOUNDING_BOXES
-// #define IONL_SHOW_DEBUG_INFO
+#define IONL_SHOW_DEBUG_BOUNDING_BOXES IONL_DEBUG_FEATURES
+#define IONL_SHOW_DEBUG_INFO IONL_DEBUG_FEATURES
 
 using namespace std::literals;
 

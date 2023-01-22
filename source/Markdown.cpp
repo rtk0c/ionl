@@ -1,5 +1,7 @@
 #include "Markdown.hpp"
 
+#include "Macros.hpp"
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -71,241 +73,265 @@ Ionl::MarkdownStylesheet Ionl::gMarkdownStylesheet{};
 Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
     MdParseOutput out;
 
-    // TODO this honestly is a lot of edge case handling, maybe we really should just use irccloud-format-helper-2's code
     // TODO handle cases like ***bold and italic***, the current greedy matching method parses it as **/*text**/* which breaks the control seq pairing logic
     //      note this is also broken in irccloud-format-helper, so that won't help
 
-    // TODO break parsing state on \n
-    // TODO handle headings
+    // TODO break parsing state on paragraph break
     // TODO handle code blocks
 
-    using FormatFlagPtr = bool TextStyle::*;
-    struct ControlSequence {
-        int64_t begin = 0;
-        int64_t end = 0;
-        std::string_view pattern = {};
-        FormatFlagPtr patternFlag = nullptr;
+    // TODO might be an idea to adopt GFM, i.e. do paragraph break only on 2 or more consecutive \n, a single \n is simply ignored for formatting
+    //      but this might not be that useful since we are not performing rendering on this
 
-        bool HasClosingControlSeq() const { return end != 0; }
+    constexpr auto kInvalidTokenIdx = std::numeric_limits<size_t>::max();
+    enum class TokenType {
+        Text,
+        ParagraphBreak,
+        CtlSeq_BEGIN,
+        CtlSeqGeneric = CtlSeq_BEGIN,
+        CtlSeqBold,
+        CtlSeqItalicAsterisk,
+        CtlSeqItalicUnderscore,
+        CtlSeqUnderline,
+        CtlSeqStrikethrough,
+        CtlSeq_END,
     };
-    std::vector<ControlSequence> seenControlSeqs;
-    bool isEscaping = false;
 
-    // The characters inside the parser's processing area (for size N, basically 1 current char + N-1 lookbehind chars)
+    struct Token {
+        int64_t begin;
+        int64_t end;
+        size_t pairedTokenIdx = kInvalidTokenIdx;
+        TokenType type;
+        bool dead = false; //< Flag used to mark weather this control sequence token is allowed to have a match
+
+        bool IsText() const {
+            return type == TokenType::Text;
+        }
+
+        bool IsControlSequence() const {
+            auto n = (int)type;
+            return n >= (int)TokenType::CtlSeq_BEGIN && n < (int)TokenType::CtlSeq_END;
+        }
+
+        bool HasPairedToken() const { return pairedTokenIdx != kInvalidTokenIdx; }
+    };
+    std::vector<Token> tokens;
+
+    // The characters inside the parser's processing area (for size N, basically 1 current char + N-1 lookahead chars)
     constexpr size_t kVisionSize = 3;
     ImWchar visionBuffer[kVisionSize] = {};
 
-    auto visionBufferMatches = [&](std::string_view pattern) {
-        auto needle = pattern.begin();
-        auto haystack = std::begin(visionBuffer);
-        while (true) {
-            // Matched the whole pattern
-            if (needle == pattern.end()) return true;
-            // Reached end of input before matching the whole pattern
-            if (haystack == std::end(visionBuffer)) return false;
+    bool isEscaping = false;
+    bool isBeginningOfLine = true;
+    // == 0, regular text
+    // > 0, heading
+    bool currHeadingLevel = 0;
 
-            if (*needle != *haystack) {
-                return false;
-            }
-            ++needle;
-            ++haystack;
+    int64_t reader;
+    int readerAdvance = kVisionSize;
+
+    // TODO move all the stateful variable reads like `reader` `readerAdvance` into explicit parameters
+    auto produceControlSequence = [&](TokenType tokenType) {
+        if (isEscaping) {
+            isEscaping = false;
+            return;
         }
+
+        auto tokenBeginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
+        tokens.push_back(Token{
+            .begin = tokenBeginIdx,
+            .end = tokenBeginIdx + readerAdvance,
+            .type = tokenType,
+        });
     };
-
-    // Insert a single TextRun into `out.textRuns`
-    auto outputTextRun = [&](TextRun run) {
-        auto gapBegin = in.src->frontSize;
-        auto gapEnd = in.src->frontSize + in.src->gapSize;
-        if (run.begin < gapBegin && run.end > gapEnd) {
-            // TextRun spans over the gap, we need to split it
-            TextRun& frontRun = run;
-            TextRun backRun = run;
-
-            /* frontRun.begin; */ // Remain unchanged
-            frontRun.end = gapBegin;
-            backRun.begin = gapEnd;
-            /* backRun.end; */ // Remain unchanged
-
-            out.textRuns.push_back(std::move(frontRun));
-            out.textRuns.push_back(std::move(backRun));
-        } else {
-            out.textRuns.push_back(std::move(run));
-        }
-    };
-
-    // Insert all TextRun's represented inside `seenControlSeqs` into `out.textRuns`
-    auto outputAllMatchedTextRuns = [&]() {
-        // We assume that all elements appear with monotonically increasing `ControlSequence::begin`,
-        // which should be maintained by the scanning logic below
-
-        // TODO this could probably be much more optimized, not allocating memory or sharing a preallocated chunk
-
-        struct ToggleOp {
-            FormatFlagPtr flag;
-            int64_t textLocation; // Logical index into text buffer; this is used just as a sorting number
-        };
-        std::vector<ToggleOp> ops;
-
-        for (const auto& cs : seenControlSeqs) {
-            if (cs.HasClosingControlSeq()) {
-                ops.push_back({ cs.patternFlag, cs.begin });
-                ops.push_back({ cs.patternFlag, cs.end });
-            }
-        }
-
-        std::sort(ops.begin(), ops.end(), [](const ToggleOp& a, const ToggleOp& b) { return a.textLocation < b.textLocation; });
-
-        TextRun tr{};
-        // Continue from the previous text run (covering unformatted text between this and last "stack" of formatted text), if there is one
-        if (!out.textRuns.empty()) {
-            tr.begin = out.textRuns.back().end;
-        }
-        for (const auto& op : ops) {
-            /* tr.begin; */ // Set by previous iteration or starting value
-            tr.end = op.textLocation;
-
-            outputTextRun(tr);
-
-            bool& flag = tr.style.*(op.flag);
-            flag = !flag;
-
-            if (tr.begin == tr.end) {
-                // This op overlaps with the previous op, we only need to set the formatting flag without outputting a TextRun
-                continue;
-            }
-
-            tr.begin = tr.end;
-        }
-    };
-
-    // The parser operates with two indices: the "head" index points to the current character being parsed, and the "reader" index ponts to the character coming into the lookahead buffer.
-    // The buffer streaming mechanism operates on "reader", advancing to the next segment when the end of the current one is reached.
-    // "head" is not stored, but calculated on the fly when it's needed.
-    // When the parser initiates, "reader" is advanced (thus filling the lookahead buffer) until "head" reaches 0 (points to the first valid character), or until "reader" reaches end of the input buffer.
 
     std::pair<int64_t, int64_t> sourceSegments[] = {
         { in.src->GetFrontBegin(), in.src->GetFrontSize() },
         { in.src->GetBackBegin(), in.src->GetBackSize() },
-        // The dummy segment at the very end for "head" to advance until the very end of source buffer
+        // The dummy segment at the very end for `reader` to advance until the very end of source buffer
         { in.src->GetBackEnd(), kVisionSize - 1 },
     };
-    int skipCount = 0;
     for (auto it = std::begin(sourceSegments); it != std::end(sourceSegments); ++it) {
         const auto& sourceSegment = *it;
         bool isLastSourceSegment = it + 1 == std::end(sourceSegments);
 
+        // The main parser body.
+        // The parser works by running the parser branches repeatedly for this segment, trying to match stuff within the vision buffer.
+        // It may instruct `reader` to be advanced by a certain number, depending on what it saw.
+
+        // `reader` is index to the next char to be read into the vision buffer.
+        //  Use AdjustBufferIndex(buffer, reader, -kVisionSize) to get idx of the first char in the vision buffer.
+
+        // `readerAdvance` is the number of characters the parser will advance, handled at the top.
+
         int64_t segmentBegin = sourceSegment.first;
         int64_t segmentEnd = sourceSegment.first + sourceSegment.second;
 
-        int64_t reader = segmentBegin;
-        while (reader < segmentEnd) {
-            std::shift_left(std::begin(visionBuffer), std::end(visionBuffer), 1);
-            if (!isLastSourceSegment) {
-                visionBuffer[kVisionSize - 1] = in.src->buffer[reader];
-            } else {
-                visionBuffer[kVisionSize - 1] = '\0';
-            }
-            reader += 1;
+        reader = segmentBegin;
+        // Keep `readerAdvance`'s value potentially from the last loop, if e.g. a control sequence spans across the gap
+        while (true) {
+            // Advance `reader`
+            for (int i = 0; i < readerAdvance; ++i) {
+                if (reader >= segmentEnd) {
+                    goto segmentDone;
+                }
 
-            if (skipCount > 0) {
-                skipCount -= 1;
+                std::shift_left(std::begin(visionBuffer), std::end(visionBuffer), 1);
+                if (!isLastSourceSegment) {
+                    visionBuffer[kVisionSize - 1] = in.src->buffer[reader];
+                } else {
+                    visionBuffer[kVisionSize - 1] = '\0';
+                }
+                reader += 1;
+            }
+
+            // Move ahead by 1 character by default, overridden by parser branches below
+            readerAdvance = 1;
+
+            // Parse heading
+            if (isBeginningOfLine && visionBuffer[0] == '#') {
+                // We need quite a lot of lookahead here, so we use GapBufferIterator instead of having a super large vision buffer to avoid having to move around lots of data in the normal code path
+                GapBuffer::const_iterator iter(*in.src, reader);
+                int headingLevel = 0;
+                while (*iter == '#' && iter.HasNext()) {
+                    headingLevel += 1;
+                }
+
+                if (*iter == ' ') {
+                    // Parsed heading sequence successfully
+                    currHeadingLevel = headingLevel;
+                    readerAdvance = headingLevel;
+
+                    continue;
+                } else {
+                    // Bad heading sequence, skip all the scanned parts as plain text
+                    readerAdvance = headingLevel + 1;
+                }
+            }
+
+            if (visionBuffer[0] == '*') {
+                if (visionBuffer[1] == '*') {
+                    // *text*
+                    readerAdvance = 2;
+                    produceControlSequence(TokenType::CtlSeqBold);
+                } else {
+                    // *text*
+                    readerAdvance = 1;
+                    produceControlSequence(TokenType::CtlSeqItalicAsterisk);
+                }
+                continue;
+            }
+            if (visionBuffer[0] == '_') {
+                if (visionBuffer[1] == '_') {
+                    // __text__
+                    readerAdvance = 2;
+                    produceControlSequence(TokenType::CtlSeqUnderline);
+                } else {
+                    // _text_
+                    readerAdvance = 1;
+                    produceControlSequence(TokenType::CtlSeqItalicUnderscore);
+                }
+                continue;
+            }
+            if (visionBuffer[0] == '~' && visionBuffer[1] == '~') {
+                {
+                    // ~~text~~
+                    readerAdvance = 2;
+                    produceControlSequence(TokenType::CtlSeqStrikethrough);
+                }
                 continue;
             }
 
-            // Performs control sequence matching
-            // Returns whether caller should try match the next candidate.
-            auto doMatching = [&](std::string_view pattern, FormatFlagPtr patternFlag) -> bool {
-                assert(!pattern.empty());
+            // Set escaping state for the next character
+            // If this is a '\', and it's being escaped, treat this just as plain text; otherwise escape the next character
+            // If this is anything else, this condition will evaluate to false
+            isEscaping = visionBuffer[0] == '\\' && !isEscaping;
 
-                // Case: no match (try next candidate)
-                if (!visionBufferMatches(pattern)) {
-                    return false;
-                }
-
-                // Case: matches but escaped; treat as normal text
-                if (isEscaping) {
-                    isEscaping = false;
-
-                    skipCount = pattern.size() - 1;
-                    return true;
-                }
-
-                // Case: matches and valid
-                constexpr auto kInvalidIdx = std::numeric_limits<size_t>::max();
-                size_t lastSeenIdx = kInvalidIdx;
-                for (auto it = seenControlSeqs.rbegin(); it != seenControlSeqs.rend(); ++it) {
-                    if (it->pattern == pattern && !it->HasClosingControlSeq()) {
-                        // https://stackoverflow.com/a/24998000
-                        lastSeenIdx = std::distance(seenControlSeqs.begin(), it.base()) - 1;
-                        break;
-                    }
-                }
-
-                if (lastSeenIdx == kInvalidIdx) {
-                    // Opening control sequence
-                    seenControlSeqs.push_back(ControlSequence{
-                        .begin = AdjustBufferIndex(*in.src, reader, -kVisionSize),
-                        .pattern = pattern,
-                        .patternFlag = patternFlag,
-                    });
-                } else {
-                    // Closing control sequence
-
-                    auto& lastSeen = seenControlSeqs[lastSeenIdx];
-                    lastSeen.end = AdjustBufferIndex(*in.src, reader, -kVisionSize + pattern.size());
-
-                    // Remove the record of this control seq (and everything after because they can't possibly be matched, since we disallow intermingled syntax like *foo_bar*_)
-                    size_t lastUnclosedControlSeq = seenControlSeqs.size();
-                    while (lastUnclosedControlSeq-- > 0) {
-                        if (seenControlSeqs[lastUnclosedControlSeq].HasClosingControlSeq()) {
-                            lastUnclosedControlSeq++;
-                            break;
-                        }
-                    }
-                    seenControlSeqs.resize(lastUnclosedControlSeq);
-
-                    // If we matched the very first control sequence, i.e. going back to unformatted text now
-                    if (lastSeenIdx == 0) {
-                        outputAllMatchedTextRuns();
-                        seenControlSeqs.clear();
-                    }
-                }
-                skipCount = pattern.size() - 1;
-                return true;
-            };
-            auto doMatchings = [&](std::initializer_list<std::string_view> patterns, FormatFlagPtr patternFlag) {
-                for (const auto& pattern : patterns) {
-                    if (doMatching(pattern, patternFlag)) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-
-            if (doMatching("**"sv, &TextStyle::isBold) ||
-                doMatching("__"sv, &TextStyle::isUnderline) ||
-                doMatching("~~"sv, &TextStyle::isStrikethrough) ||
-                doMatchings({ "*"sv, "_"sv }, &TextStyle::isItalic))
-            {
-                // No-op, handled inside the helper
+            // Set for next iteration
+            if (visionBuffer[0] == '\n') {
+                isBeginningOfLine = true;
+                isEscaping = false;
+                currHeadingLevel = 0;
             } else {
-                // Set escaping state for the next character
-                // If this is a '\', and it's being escaped, treat this just as plain text; otherwise escape the next character
-                // If this is anything else, this condition will evaluate to false
-                isEscaping = visionBuffer[0] == '\\' && !isEscaping;
+                isBeginningOfLine = false;
+            }
+        }
+
+    segmentDone:;
+    }
+
+    // Do token pairing
+    std::vector<size_t> tokenPairingStack;
+    for (size_t currIdx = 0; currIdx < tokens.size(); ++currIdx) {
+        auto& curr = tokens[currIdx];
+        if (curr.IsControlSequence()) {
+            // Scan the stack for matching controls
+            for (auto candIdxIt = tokenPairingStack.rbegin(); candIdxIt != tokenPairingStack.rend(); ++candIdxIt) {
+                auto& cand = tokens[*candIdxIt];
+
+                // Case: found
+                // - Discard all controls after this one, they are unmatched, e.g. **text__** gives a bold 'text__'
+                // - This leaves the pairedSymbolIndex field as undefined, which implies that it's not consumed
+                if (cand.type == curr.type) {
+                    cand.pairedTokenIdx = currIdx;
+                    curr.pairedTokenIdx = *candIdxIt;
+
+                    // Remove elements in vector including and after the `candIdxIdx`-th element
+                    tokenPairingStack.resize(*candIdxIt);
+                    goto searchPairsDone;
+                }
+            }
+
+            // Case: not found
+            // - Push symbol into stack
+            tokenPairingStack.push_back(currIdx);
+
+        searchPairsDone:;
+        }
+    }
+    // At this point everything left in `tokenPairingStack` is also unpaired
+
+    TextStyle currStyle{};
+    int64_t currTextRunBegin = 0;
+    for (const auto& token : tokens) {
+        if (token.IsControlSequence() && token.HasPairedToken()) {
+            out.textRuns.push_back({
+                .begin = currTextRunBegin,
+                .end = token.begin,
+                .style = currStyle,
+            });
+
+            currTextRunBegin = token.begin;
+
+            switch (token.type) {
+                using enum TokenType;
+                case CtlSeqGeneric:
+                    break;
+                case CtlSeqBold:
+                    currStyle.isBold = !currStyle.isBold;
+                    break;
+                case CtlSeqItalicAsterisk:
+                case CtlSeqItalicUnderscore:
+                    currStyle.isItalic = !currStyle.isItalic;
+                    break;
+                case CtlSeqUnderline:
+                    currStyle.isUnderline = !currStyle.isUnderline;
+                    break;
+                case CtlSeqStrikethrough:
+                    currStyle.isStrikethrough = !currStyle.isStrikethrough;
+                    break;
+                default: UNREACHABLE;
             }
         }
     }
-
-    // Output the last TextRun from end of the last formatted stack to end of buffer, if there is any
-    if (!out.textRuns.empty()) {
-        auto& last = out.textRuns.back();
-        if (last.end != in.src->bufferSize) {
-            outputTextRun(TextRun{
-                .begin = last.end,
-                .end = in.src->bufferSize,
-            });
-        }
+    // Add the last text range if there is any left
+    if (auto lastTextIdx = in.src->GetBackSize() > 0 ? in.src->GetBackEnd() : in.src->GetFrontEnd();
+        currTextRunBegin != lastTextIdx)
+    {
+        out.textRuns.push_back({
+            .begin = currTextRunBegin,
+            .end = lastTextIdx,
+            .style = currStyle,
+        });
     }
 
     return out;

@@ -28,11 +28,12 @@ Ionl::GapBuffer::GapBuffer(std::string_view content)
     : buffer{ nullptr }
     , bufferSize{ 0 }
     , frontSize{ 0 }
-    , gapSize{ 0 } {
+    , gapSize{ 0 } //
+{
     UpdateContent(content);
 }
 
-Ionl::GapBuffer::GapBuffer(GapBuffer&& that)
+Ionl::GapBuffer::GapBuffer(GapBuffer&& that) noexcept
     : buffer{ that.buffer }
     , bufferSize{ that.bufferSize }
     , frontSize{ that.frontSize }
@@ -44,7 +45,7 @@ Ionl::GapBuffer::GapBuffer(GapBuffer&& that)
     that.gapSize = 0;
 }
 
-Ionl::GapBuffer& Ionl::GapBuffer::operator=(GapBuffer&& that) {
+Ionl::GapBuffer& Ionl::GapBuffer::operator=(GapBuffer&& that) noexcept {
     if (this == &that) {
         return *this;
     }
@@ -182,73 +183,11 @@ void Ionl::WidenGap(Ionl::GapBuffer& buf, size_t newGapSize) {
         oldBackSize);
 }
 
-void Ionl::GapBufferIterator::SetBegin() {
-    idx = 0;
-}
-
-void Ionl::GapBufferIterator::SetEnd() {
-    idx = obj->bufferSize;
-}
-
-ImWchar& Ionl::GapBufferIterator::operator*() const {
-    return obj->buffer[idx];
-}
-
-Ionl::GapBufferIterator& Ionl::GapBufferIterator::operator++() {
-    idx += 1;
-    if (idx == obj->frontSize) {
-        idx += obj->gapSize;
-    }
-    return *this;
-}
-
-Ionl::GapBufferIterator Ionl::GapBufferIterator::operator+(int64_t advance) const {
-    // Assumes adding `advance` to `ptr` does not go outside of gap buffer bounds
-
-    int64_t gapBeginIdx = obj->frontSize;
-    int64_t gapEndIdx = obj->frontSize + obj->gapSize;
-    int64_t gapSize = obj->gapSize;
-
-    GapBufferIterator res;
-    res.obj = obj;
-    res.idx = AdjustBufferIndex(*obj, idx, advance);
-    return res;
-}
-
-Ionl::GapBufferIterator& Ionl::GapBufferIterator::operator+=(int64_t advance) {
-    *this = *this + advance;
-    return *this;
-}
-
-Ionl::GapBufferIterator& Ionl::GapBufferIterator::operator--() {
-    if (idx == obj->frontSize + obj->gapSize) {
-        idx -= obj->gapSize;
-    } else {
-        idx -= 1;
-    }
-    return *this;
-}
-
-Ionl::GapBufferIterator Ionl::GapBufferIterator::operator-(int64_t advance) const {
-    return *this + (-advance);
-}
-
-Ionl::GapBufferIterator& Ionl::GapBufferIterator::operator-=(int64_t advance) {
-    return *this += (-advance);
-}
-
-bool Ionl::GapBufferIterator::HasNext() const {
-    return idx != obj->bufferSize;
-}
-
-bool Ionl::GapBufferIterator::operator<(const GapBufferIterator& that) const {
-    return this->idx < that.idx;
-}
-
-bool Ionl::GapBufferIterator::operator>(const GapBufferIterator& that) const {
-    return this->idx > that.idx;
-}
-
-bool Ionl::GapBufferIterator::operator==(const GapBufferIterator& that) const {
-    return this->idx == that.idx;
-}
+// clang-format off
+auto Ionl::GapBuffer::begin() -> iterator { return iterator(*this); }
+auto Ionl::GapBuffer::begin() const -> const_iterator { return cbegin(); }
+auto Ionl::GapBuffer::cbegin() const -> const_iterator { return const_iterator(*this); }
+auto Ionl::GapBuffer::end() -> iterator { iterator it(*this); it.SetEnd(); return it; }
+auto Ionl::GapBuffer::end() const -> const_iterator { return cend(); }
+auto Ionl::GapBuffer::cend() const -> const_iterator { const_iterator it(*this); it.SetEnd(); return it; }
+// clang-format on

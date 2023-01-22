@@ -108,8 +108,8 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
 
             GlyphRun glyphRun;
             glyphRun.tr = textRun;
-            glyphRun.tr.begin = std::distance(in.src->begin(), beg);
-            glyphRun.tr.end = std::distance(in.src->begin(), remaining);
+            glyphRun.tr.begin = std::distance(in.src->PtrBegin(), beg);
+            glyphRun.tr.end = std::distance(in.src->PtrBegin(), remaining);
             glyphRun.pos = currPos;
             glyphRun.horizontalAdvance = runDim.x;
             out.glyphRuns.push_back(std::move(glyphRun));

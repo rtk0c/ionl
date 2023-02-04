@@ -19,9 +19,6 @@
 #include <iostream>
 #include <string>
 
-#define IONL_SHOW_DEBUG_INFO IONL_DEBUG_FEATURES
-#define IONL_SHOW_DEBUG_EXAMPLES IONL_DEBUG_FEATURES
-
 using namespace std::literals;
 using namespace Ionl;
 
@@ -112,7 +109,7 @@ static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
         c = ImVec2(-0.750f, -0.866f) * r;
     }
     window->DrawList->AddTriangleFilled(center + a, center + b, center + c, ImGui::GetColorU32(ImGuiCol_Text));
-#ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
+#if IONL_DEBUG_FEATURES
     window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
 #endif
 
@@ -138,7 +135,7 @@ static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
         window->DrawList->AddCircleFilled(center, fontSize * 0.35f, ImGui::GetColorU32(ImGuiCol_TabActive));
     }
     window->DrawList->AddCircleFilled(center, fontSize * 0.2f, ImGui::GetColorU32(ImGuiCol_Text));
-#ifdef IONL_DRAW_DEBUG_BOUNDING_BOXES
+#if IONL_DEBUG_FEATURES
     window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
 #endif
 
@@ -335,7 +332,7 @@ static void ShowAppViews(AppState& as) {
         ImGui::End();
     }
 
-#ifdef IONL_SHOW_DEBUG_EXAMPLES
+#if IONL_DEBUG_FEATURES
     ImGui::Begin("TextEdit debug example");
     {
         constexpr std::string_view kExampleText = R"""(

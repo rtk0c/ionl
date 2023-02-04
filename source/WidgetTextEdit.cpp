@@ -7,41 +7,68 @@
 #include <span>
 #include <utility>
 
-// Development/debugging helpers
-#define IONL_SHOW_DEBUG_BOUNDING_BOXES IONL_DEBUG_FEATURES
-#define IONL_SHOW_DEBUG_INFO IONL_DEBUG_FEATURES
-
 using namespace std::literals;
 
 namespace {
 using namespace Ionl;
 
-#ifdef IONL_SHOW_DEBUG_INFO
-void ShowDebugTextRun(std::string_view source, const TextRun& tr) {
-    auto substr = source.substr(tr.begin, tr.end - tr.begin);
-    ImGui::Text("Segment: [%zu,%zu); %c%c%c%c%c",
+#if IONL_DEBUG_FEATURES
+struct DebugShowContext {
+    ImRect bb;
+    const ImWchar* sourceBeg;
+    const ImWchar* sourceEnd;
+};
+
+const char* TextStyleTypeToString(TextStyleType type) {
+    if (IsHeading(type)) {
+        constexpr const char* kHeadings[] = { "H1", "H2", "H3", "H4", "H5" };
+        return kHeadings[CalcHeadingLevel(type) - 1];
+    }
+    switch (type) {
+        using enum TextStyleType;
+        case Regular: return "Reg";
+        case Url: return "URL";
+
+        // We can ignore headings
+        default: return nullptr;
+    }
+}
+
+template <typename TChar>
+void ShowDebugTextRun(const TChar* source, const TextRun& tr) {
+    ImGui::Text("Segment: [%zu,%zu); %s %c%c%c%c%c",
         tr.begin,
         tr.end,
+        TextStyleTypeToString(tr.style.type),
         tr.style.isBold ? 'b' : '-',
         tr.style.isItalic ? 'i' : '-',
         tr.style.isUnderline ? 'u' : '-',
         tr.style.isStrikethrough ? 's' : '-',
         tr.style.isMonospace ? 'm' : '-');
-    ImGui::Indent();
+
     auto window = ImGui::GetCurrentWindowRead();
     auto ptTopLeft = window->DC.CursorPos;
 
     // Use default font because that has clearly recognizable glyph boundaries, easier for debugging purposes
     ImGui::PushFont(nullptr);
-    ImGui::Text("%.*s", (int)substr.size(), substr.begin());
+    // HACK: support TChar being other integral types, e.g. unsigned short for UTF-8 instead of the standard wchar_t
+    if constexpr (sizeof(TChar) == sizeof(char)) {
+        ImGui::TextEx(source + tr.begin, source + tr.end);
+    } else if constexpr (sizeof(TChar) == sizeof(ImWchar)) {
+        char buf[1000];
+        ImTextStrToUtf8(buf, IM_ARRAYSIZE(buf), source + tr.begin, source + tr.end);
+        ImGui::TextUnformatted(buf);
+    } else {
+        ImGui::TextUnformatted("Unknown char type");
+    }
     ImGui::PopFont();
 
-    auto tpBottomLeft = window->DC.CursorPos;
-    ImGui::Unindent();
-    ImGui::GetWindowDrawList()->AddRect(ptTopLeft, ImVec2(ImGui::GetContentRegionAvail().x, tpBottomLeft.y), IM_COL32(255, 255, 0, 255));
+    auto ptBottomLeft = window->DC.CursorPos;
+    ImGui::GetWindowDrawList()->AddRect(ptTopLeft, ImVec2(ptBottomLeft.x + ImGui::GetContentRegionAvail().x, ptBottomLeft.y), IM_COL32(255, 255, 0, 255));
 }
 
-void ShowDebugTextRuns(std::string_view source, std::span<const TextRun> textRuns) {
+template <typename TChar>
+void ShowDebugTextRuns(const TChar* source, std::span<const TextRun> textRuns) {
     ImGui::Text("Showing %zu TextRun's:", textRuns.size());
     for (size_t i = 0; i < textRuns.size(); ++i) {
         ImGui::Text("[%zu]", i);
@@ -68,6 +95,32 @@ void PrintDebugTextRuns(std::string_view source, std::span<const TextRun> textRu
     for (size_t i = 0; i < textRuns.size(); ++i) {
         printf("[%zu] ", i);
         PrintDebugTextRun(source, textRuns[i]);
+    }
+}
+
+void ShowDebugGlyphRun(const DebugShowContext& ctx, const GlyphRun& glyphRun) {
+    ImGui::Text("Top left: (%f, %f)", glyphRun.pos.x, glyphRun.pos.y);
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("(show)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ShowDebugTextRun(ctx.sourceBeg, glyphRun.tr);
+        ImGui::EndTooltip();
+
+        auto& face = gMarkdownStylesheet.LookupFace(glyphRun.tr.style);
+        ImVec2 ptMin = ctx.bb.Min + glyphRun.pos;
+        ImVec2 ptMax(ptMin.x + glyphRun.horizontalAdvance, ptMin.y + face.font->FontSize);
+        ImGui::GetForegroundDrawList()->AddRect(ptMin, ptMax, IM_COL32(255, 0, 255, 255));
+    }
+}
+
+void ShowDebugGlyphRuns(const DebugShowContext& ctx, std::span<const GlyphRun> glyphRuns) {
+    ImGui::Text("Showing %zu GlyphRuns's:", glyphRuns.size());
+    for (size_t i = 0; i < glyphRuns.size(); ++i) {
+        ImGui::Text("[%zu] ", i);
+        ImGui::SameLine();
+        ShowDebugGlyphRun(ctx, glyphRuns[i]);
     }
 }
 #endif
@@ -447,19 +500,21 @@ void Ionl::TextEdit::Show() {
         ImGui::ClearActiveID();
     }
 
-#ifdef IONL_SHOW_DEBUG_BOUNDING_BOXES
-    auto dl = ImGui::GetForegroundDrawList();
-    dl->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
-    for (auto& glyphRun : _cachedGlyphRuns) {
-        auto& face = gMarkdownStylesheet.LookupFace(glyphRun.tr.style);
-        auto absPos = bb.Min + glyphRun.pos;
-        dl->AddRect(absPos, ImVec2(absPos.x + glyphRun.horizontalAdvance, absPos.y + face.font->FontSize), IM_COL32(255, 0, 255, 255));
+#if IONL_DEBUG_FEATURES
+    if (_debugShowBoundingBoxes) {
+        auto dl = ImGui::GetForegroundDrawList();
+        dl->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 0, 255));
+        for (auto& glyphRun : _cachedGlyphRuns) {
+            auto& face = gMarkdownStylesheet.LookupFace(glyphRun.tr.style);
+            auto absPos = bb.Min + glyphRun.pos;
+            dl->AddRect(absPos, ImVec2(absPos.x + glyphRun.horizontalAdvance, absPos.y + face.font->FontSize), IM_COL32(255, 0, 255, 255));
+        }
     }
-#endif
 
-#ifdef IONL_SHOW_DEBUG_INFO
     ImGui::PushID(_id);
-    if (ImGui::CollapsingHeader("TextEdit debug")) {
+    if (ImGui::CollapsingHeader("TextEdit general debug")) {
+        ImGui::Checkbox("Show bounding boxes", &_debugShowBoundingBoxes);
+
         ImGui::Text("_cursorIdx = %zu", _cursorIdx);
         ImGui::Text("_anchorIdx = %zu", _cursorIdx);
         if (HasSelection()) {
@@ -491,6 +546,17 @@ void Ionl::TextEdit::Show() {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextUnformatted(wrapPointText);
         ImGui::PopTextWrapPos();
+    }
+    if (ImGui::CollapsingHeader("TextEdit._tb->[TextRun]")) {
+        ShowDebugTextRuns(_tb->gapBuffer.buffer, _tb->textRuns);
+    }
+    if (ImGui::CollapsingHeader("TextEdit.[GlyphRun]")) {
+        DebugShowContext ctx{
+            .bb = bb,
+            .sourceBeg = _tb->gapBuffer.PtrBegin(),
+            .sourceEnd = _tb->gapBuffer.PtrEnd(),
+        };
+        ShowDebugGlyphRuns(ctx, _cachedGlyphRuns);
     }
     ImGui::PopID();
 #endif

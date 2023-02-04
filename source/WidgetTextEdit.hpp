@@ -92,6 +92,10 @@ struct TextEdit {
     // true: the cursor is before the wrap (prev line)
     bool _cursorAffinity = false;
 
+#if IONL_DEBUG_FEATURES
+    bool _debugShowBoundingBoxes = false;
+#endif
+
     TextEdit(ImGuiID id, TextBuffer& textBuffer);
 
     void Show();

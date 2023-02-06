@@ -146,9 +146,12 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
 
     ImVec2 currPos{};
     ImVec2 currLineDim{};
+    bool isBeginningOfParagraph = true;
 
     for (const auto& textRun : in.textRuns) {
         auto& face = in.styles->LookupFace(textRun.style);
+
+        isBeginningOfParagraph = false;
 
         const ImWchar* beg = &in.src->buffer[textRun.begin];
         const ImWchar* end = &in.src->buffer[textRun.end];
@@ -186,10 +189,21 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
             out.boundingBox.y += currLineDim.y + in.styles->linePadding;
             currLineDim = {};
         }
+
+        if (textRun.hasParagraphBreak) {
+            currPos.x = 0;
+            currPos.y += currLineDim.y + in.styles->paragraphPadding;
+            out.boundingBox.x = ImMax(out.boundingBox.x, currLineDim.x);
+            out.boundingBox.y += currLineDim.y + in.styles->paragraphPadding;
+            currLineDim = {};
+            isBeginningOfParagraph = true;
+        }
     }
 
-    // Add last line's height (where the wrapping code is not reached)
-    out.boundingBox.y += currLineDim.y;
+    if (!isBeginningOfParagraph) {
+        // Add last line's height (where the wrapping code is not reached)
+        out.boundingBox.y += currLineDim.y;
+    }
 
     return out;
 }

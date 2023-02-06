@@ -68,6 +68,7 @@ struct TextRun {
     int64_t begin; // Buffer index
     int64_t end; // Buffer index
     TextStyle style;
+    bool hasParagraphBreak = false; // Whether to break paragraph at end of this TextRun
 };
 
 struct MdParseInput {

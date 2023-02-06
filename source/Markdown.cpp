@@ -378,6 +378,11 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
             outputCurrTextRun(token.headingLevel, token.begin);
             currTextRunBegin = token.end; // We don't want the \n char to be a part of the text output
             currStyle = {};
+
+            if (!out.textRuns.empty()) {
+                out.textRuns.back().hasParagraphBreak = true;
+            }
+
             continue;
         }
 

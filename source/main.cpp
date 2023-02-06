@@ -341,6 +341,7 @@ static void ShowAppViews(AppState& as) {
 __This is an extremely long text line with underline. A long long time ago, when the people at the var end of the world still spoke and began their stories with 'in the near future', there was...__
 Test **bold** _italics_ __underline__ ~~strikethrough~~
 `monospace`
+`monospace containing *potential* formatting should be ignored`
 **`formatted`_`monospace`_**
 `hello`__`more`~~`more`~~__
 Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce nulla nibh, dictum id enim at, laoreet mattis lacus. Nullam porta justo lorem. Quisque commodo massa at lacus bibendum, sed porttitor quam vestibulum. Integer ultricies diam lectus, in aliquam est rutrum eu. Sed eu purus leo. Maecenas non massa ultricies, volutpat mi vitae, aliquam ante. Fusce tristique, massa nec consectetur sagittis, neque ipsum pulvinar ligula, vitae condimentum nulla mi nec leo. Nullam sit amet rutrum justo, vel porttitor ipsum. Vestibulum _id viverra mauris. Quisque eu porta orci, eget rhoncus nibh. Cras laoreet, odio vestibulum lobortis mattis, lectus nunc accumsan lorem, quis sollicitudin nisi augue ut tortor. Mauris feugiat vehicula augue ac condimentum. Proin tincidunt condimentum nunc eu aliquam. Duis in sapien sem. Pellentesque pellentesque risus ac luctus auctor.

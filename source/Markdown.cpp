@@ -94,6 +94,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
         CtlSeq_BEGIN,
         CtlSeqGeneric = CtlSeq_BEGIN,
+        CtlSeqInlineCode,
         CtlSeqBold,
         CtlSeqItalicAsterisk,
         CtlSeqItalicUnderscore,
@@ -135,6 +136,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
     int64_t reader;
     int readerAdvance = kVisionSize;
+    int readerAdvanceDone = 0; // Used inside loop, keeping track of number of advancements completed across segment changes
 
     // TODO move all the stateful variable reads like `reader` `readerAdvance` into explicit parameters
     auto produceControlSequence = [&](TokenType tokenType) {
@@ -170,15 +172,19 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
         //  Use AdjustBufferIndex(buffer, reader, -kVisionSize) to get idx of the first char in the vision buffer.
 
         // `readerAdvance` is the number of characters the parser will advance, handled at the top.
+        // `readerAdvance` and `readerAdvanceDone` are kept across segment changes to achieve the following logic:
+        // - The parser body is executed, setting a `readerAdvance` value
+        // - Next iteration, we start advancing `reader`; if we hit end of a segment boundary, we skip onto the next
+        //   segment by running `goto segmentDone;`
+        //   and then continuing to advance `reader` until we finished the request value
 
         int64_t segmentBegin = sourceSegment.first;
         int64_t segmentEnd = sourceSegment.first + sourceSegment.second;
 
         reader = segmentBegin;
-        // Keep `readerAdvance`'s value potentially from the last loop, if e.g. a control sequence spans across the gap
         while (true) {
             // Advance `reader`
-            for (int i = 0; i < readerAdvance; ++i) {
+            for (; readerAdvanceDone < readerAdvance; ++readerAdvanceDone) {
                 if (reader >= segmentEnd) {
                     goto segmentDone;
                 }
@@ -191,6 +197,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
                 }
                 reader += 1;
             }
+            readerAdvanceDone = 0;
 
             // Move ahead by 1 character by default, overridden by parser branches below
             readerAdvance = 1;
@@ -219,13 +226,19 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
                 }
             }
 
+            if (visionBuffer[0] == '`') {
+                // `inline code`
+                readerAdvance = 1;
+                produceControlSequence(TokenType::CtlSeqInlineCode);
+                continue;
+            }
             if (visionBuffer[0] == '*') {
                 if (visionBuffer[1] == '*') {
-                    // *text*
+                    // **bold**
                     readerAdvance = 2;
                     produceControlSequence(TokenType::CtlSeqBold);
                 } else {
-                    // *text*
+                    // *bold*
                     readerAdvance = 1;
                     produceControlSequence(TokenType::CtlSeqItalicAsterisk);
                 }
@@ -233,22 +246,20 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
             }
             if (visionBuffer[0] == '_') {
                 if (visionBuffer[1] == '_') {
-                    // __text__
+                    // __underline__
                     readerAdvance = 2;
                     produceControlSequence(TokenType::CtlSeqUnderline);
                 } else {
-                    // _text_
+                    // _italics_
                     readerAdvance = 1;
                     produceControlSequence(TokenType::CtlSeqItalicUnderscore);
                 }
                 continue;
             }
             if (visionBuffer[0] == '~' && visionBuffer[1] == '~') {
-                {
-                    // ~~text~~
-                    readerAdvance = 2;
-                    produceControlSequence(TokenType::CtlSeqStrikethrough);
-                }
+                // ~~strikethrough~~
+                readerAdvance = 2;
+                produceControlSequence(TokenType::CtlSeqStrikethrough);
                 continue;
             }
 
@@ -284,12 +295,22 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
                 size_t candIdx = tokenPairingStack[candIdxIt];
                 auto& cand = tokens[candIdx];
 
+                assert(candIdx != currIdx);
+
                 // Case: found
                 // - Discard all controls after this one, they are unmatched, e.g. **text__** gives a bold 'text__'
                 // - This leaves the pairedSymbolIndex field as undefined, which implies that it's not consumed
                 if (cand.type == curr.type) {
                     cand.pairedTokenIdx = currIdx;
                     curr.pairedTokenIdx = candIdx;
+
+                    if (cand.type == TokenType::CtlSeqInlineCode) {
+                        // Disable all other formatting control sequences inside inline code
+                        for (size_t i = candIdx + 1; i < currIdx; ++i) {
+                            auto& token = tokens[i];
+                            token.pairedTokenIdx = kInvalidTokenIdx;
+                        }
+                    }
 
                     // Remove elements in vector including and after the `candIdxIdx`-th element
                     tokenPairingStack.resize(candIdxIt);
@@ -369,6 +390,9 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
             switch (token.type) {
                 using enum TokenType;
                 case CtlSeqGeneric:
+                    break;
+                case CtlSeqInlineCode:
+                    currStyle.isMonospace = !currStyle.isMonospace;
                     break;
                 case CtlSeqBold:
                     currStyle.isBold = !currStyle.isBold;

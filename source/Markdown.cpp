@@ -15,7 +15,11 @@ int Ionl::CalcHeadingLevel(TextStyleType type) {
 }
 
 Ionl::TextStyleType Ionl::MakeHeadingLevel(int level) {
-    return (TextStyleType)((int)TextStyleType::Title_BEGIN + level - 1);
+    if (level == 0) {
+        return TextStyleType::Regular;
+    } else {
+        return (TextStyleType)((int)TextStyleType::Title_BEGIN + level - 1);
+    }
 }
 
 bool Ionl::IsHeading(TextStyleType type) {
@@ -88,9 +92,6 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
         Text,
         ParagraphBreak,
 
-        Heading_BEGIN,
-        Heading_END = (int)Heading_BEGIN + kMaxHeadingLevel,
-
         CtlSeq_BEGIN,
         CtlSeqGeneric = CtlSeq_BEGIN,
         CtlSeqBold,
@@ -105,25 +106,12 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
         int64_t begin;
         int64_t end;
         size_t pairedTokenIdx = kInvalidTokenIdx;
+        int headingLevel = 0;
         TokenType type;
         bool dead = false; //< Flag used to mark weather this control sequence token is allowed to have a match
 
         bool IsText() const {
             return type == TokenType::Text;
-        }
-
-        static TokenType MakeHeadingTtype(int level) {
-            return (TokenType)((int)TokenType::Heading_BEGIN + level - 1);
-        }
-
-        static int CalcHeadingLevel(TokenType ttype) {
-            auto n = (int)ttype;
-            return n - (int)TokenType::Heading_BEGIN + 1;
-        }
-
-        bool IsHeading() const {
-            auto n = (int)type;
-            return n >= (int)TokenType::Heading_BEGIN && n < (int)TokenType::Heading_END;
         }
 
         bool IsControlSequence() const {
@@ -143,7 +131,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
     bool isBeginningOfLine = true;
     // == 0, regular text
     // > 0, heading
-    bool currHeadingLevel = 0;
+    int currHeadingLevel = 0;
 
     int64_t reader;
     int readerAdvance = kVisionSize;
@@ -159,6 +147,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
         tokens.push_back(Token{
             .begin = tokenBeginIdx,
             .end = tokenBeginIdx + readerAdvance,
+            .headingLevel = currHeadingLevel,
             .type = tokenType,
         });
     };
@@ -218,13 +207,10 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
                     ++iter;
                 }
 
-                auto endIdx = iter.idx;
-
                 if (*iter == ' ') {
                     // Parsed heading sequence successfully
                     currHeadingLevel = headingLevel;
                     readerAdvance = headingLevel;
-                    tokens.push_back({ .begin = beginIdx, .end = endIdx, .type = Token::MakeHeadingTtype(headingLevel) });
 
                     continue;
                 } else {
@@ -278,7 +264,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
                 currHeadingLevel = 0;
 
                 auto beginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
-                tokens.push_back({ .begin = beginIdx, .end = beginIdx - 1, .type = TokenType::ParagraphBreak });
+                tokens.push_back({ .begin = beginIdx, .end = beginIdx + 1, .type = TokenType::ParagraphBreak });
             } else {
                 isBeginningOfLine = false;
             }
@@ -293,18 +279,20 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
         auto& curr = tokens[currIdx];
         if (curr.IsControlSequence()) {
             // Scan the stack for matching controls
-            for (auto candIdxIt = tokenPairingStack.rbegin(); candIdxIt != tokenPairingStack.rend(); ++candIdxIt) {
-                auto& cand = tokens[*candIdxIt];
+            // This is just a backwards iteration loop -- not using reverse iterator because converting them to indices for std::vector::resize is even more confusing than this
+            for (size_t candIdxIt = tokenPairingStack.size(); candIdxIt-- > 0;) {
+                size_t candIdx = tokenPairingStack[candIdxIt];
+                auto& cand = tokens[candIdx];
 
                 // Case: found
                 // - Discard all controls after this one, they are unmatched, e.g. **text__** gives a bold 'text__'
                 // - This leaves the pairedSymbolIndex field as undefined, which implies that it's not consumed
                 if (cand.type == curr.type) {
                     cand.pairedTokenIdx = currIdx;
-                    curr.pairedTokenIdx = *candIdxIt;
+                    curr.pairedTokenIdx = candIdx;
 
                     // Remove elements in vector including and after the `candIdxIdx`-th element
-                    tokenPairingStack.resize(*candIdxIt);
+                    tokenPairingStack.resize(candIdxIt);
                     goto searchPairsDone;
                 }
             }
@@ -343,54 +331,40 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
     TextStyle currStyle{};
     int64_t currTextRunBegin = 0;
+
+    auto outputCurrTextRun = [&](int headingLevel, int64_t end) {
+        if (currTextRunBegin == end) {
+            return;
+        }
+
+        currStyle.type = MakeHeadingLevel(headingLevel);
+        outputTextRun({
+            .begin = currTextRunBegin,
+            .end = end,
+            .style = currStyle,
+        });
+    };
+
     for (auto it = tokens.begin(); it != tokens.end(); ++it) {
         const auto& token = *it;
 
         if (token.type == TokenType::ParagraphBreak) {
+            outputCurrTextRun(token.headingLevel, token.begin);
+            currTextRunBegin = token.end; // We don't want the \n char to be a part of the text output
             currStyle = {};
             continue;
         }
 
-        if (token.IsHeading()) {
-            int64_t textRangeBegin = token.begin;
-            int64_t textRangeEnd;
-
-            // Seek to paragraph break, or end of text to compute `textRangeEnd`
-            ++it;
-            for (; it != tokens.end(); ++it) {
-                if (it->type == TokenType::ParagraphBreak) {
-                    textRangeEnd = it->begin;
-                    goto found;
-                }
-            }
-            textRangeEnd = in.src->GetLastTextIndex();
-        found:
-
-            // TODO handle formatting inside a heading
-            //      we don't render those currently so there is no use, let's not add complexity right now
-            outputTextRun({
-                .begin = textRangeBegin,
-                .end = textRangeEnd,
-                .style = {
-                    // NOTE: every other field is initialized to 0, i.e. false in this case
-                    .type = MakeHeadingLevel(Token::CalcHeadingLevel(token.type)),
-                },
-            });
-
-            currTextRunBegin = textRangeEnd;
-
-            continue;
-        }
-
         if (token.IsControlSequence() && token.HasPairedToken()) {
-            currStyle.type = TextStyleType::Regular;
-            outputTextRun({
-                .begin = currTextRunBegin,
-                .end = token.begin,
-                .style = currStyle,
-            });
-
-            currTextRunBegin = token.begin;
+            if (token.pairedTokenIdx > std::distance(tokens.begin(), it)) {
+                // This is an opening control sequence
+                outputCurrTextRun(token.headingLevel, token.begin);
+                currTextRunBegin = token.begin;
+            } else {
+                // This is a closing control sequence
+                outputCurrTextRun(token.headingLevel, token.end);
+                currTextRunBegin = token.end;
+            }
 
             switch (token.type) {
                 using enum TokenType;

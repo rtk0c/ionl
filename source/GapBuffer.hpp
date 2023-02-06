@@ -47,6 +47,9 @@ struct GapBuffer {
 
     int64_t GetContentSize() const { return bufferSize - gapSize; }
 
+    /// If back is non-empty, return back end index; otherwise return front end index.
+    int64_t GetLastTextIndex() const;
+
     int64_t GetFrontBegin() const { return 0; }
     int64_t GetFrontEnd() const { return GetGapBegin(); }
     int64_t GetFrontSize() const { return GetFrontEnd() - GetFrontBegin(); }

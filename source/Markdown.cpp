@@ -83,9 +83,14 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
     //      but this might not be that useful since we are not performing rendering on this
 
     constexpr auto kInvalidTokenIdx = std::numeric_limits<size_t>::max();
+    constexpr auto kMaxHeadingLevel = 5;
     enum class TokenType {
         Text,
         ParagraphBreak,
+
+        Heading_BEGIN,
+        Heading_END = (int)Heading_BEGIN + kMaxHeadingLevel,
+
         CtlSeq_BEGIN,
         CtlSeqGeneric = CtlSeq_BEGIN,
         CtlSeqBold,
@@ -105,6 +110,20 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
         bool IsText() const {
             return type == TokenType::Text;
+        }
+
+        static TokenType MakeHeadingTtype(int level) {
+            return (TokenType)((int)TokenType::Heading_BEGIN + level - 1);
+        }
+
+        static int CalcHeadingLevel(TokenType ttype) {
+            auto n = (int)ttype;
+            return n - (int)TokenType::Heading_BEGIN + 1;
+        }
+
+        bool IsHeading() const {
+            auto n = (int)type;
+            return n >= (int)TokenType::Heading_BEGIN && n < (int)TokenType::Heading_END;
         }
 
         bool IsControlSequence() const {
@@ -189,17 +208,23 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
             // Parse heading
             if (isBeginningOfLine && visionBuffer[0] == '#') {
+                auto beginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
+
                 // We need quite a lot of lookahead here, so we use GapBufferIterator instead of having a super large vision buffer to avoid having to move around lots of data in the normal code path
-                GapBuffer::const_iterator iter(*in.src, reader);
-                int headingLevel = 0;
+                GapBuffer::const_iterator iter(*in.src, beginIdx);
+                int headingLevel = 1;
                 while (*iter == '#' && iter.HasNext()) {
                     headingLevel += 1;
+                    ++iter;
                 }
+
+                auto endIdx = iter.idx;
 
                 if (*iter == ' ') {
                     // Parsed heading sequence successfully
                     currHeadingLevel = headingLevel;
                     readerAdvance = headingLevel;
+                    tokens.push_back({ .begin = beginIdx, .end = endIdx, .type = Token::MakeHeadingTtype(headingLevel) });
 
                     continue;
                 } else {
@@ -251,6 +276,9 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
                 isBeginningOfLine = true;
                 isEscaping = false;
                 currHeadingLevel = 0;
+
+                auto beginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
+                tokens.push_back({ .begin = beginIdx, .end = beginIdx - 1, .type = TokenType::ParagraphBreak });
             } else {
                 isBeginningOfLine = false;
             }
@@ -290,11 +318,73 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
     }
     // At this point everything left in `tokenPairingStack` is also unpaired
 
+    // TODO if we inserted a ParagraphBreak at the very end, it could make TextRun generation much simpler
+
+    // Insert a single TextRun into `out.textRuns`, while handling breaking across the gap
+    auto outputTextRun = [&in, &out](TextRun run) {
+        auto gapBegin = in.src->GetGapBegin();
+        auto gapEnd = in.src->GetGapEnd();
+        if (run.begin < gapBegin && run.end > gapEnd) {
+            // TextRun spans over the gap, we need to split it
+            TextRun& frontRun = run;
+            TextRun backRun = run;
+
+            /* frontRun.begin; */ // Remain unchanged
+            frontRun.end = gapBegin;
+            backRun.begin = gapEnd;
+            /* backRun.end; */ // Remain unchanged
+
+            out.textRuns.push_back(std::move(frontRun));
+            out.textRuns.push_back(std::move(backRun));
+        } else {
+            out.textRuns.push_back(std::move(run));
+        }
+    };
+
     TextStyle currStyle{};
     int64_t currTextRunBegin = 0;
-    for (const auto& token : tokens) {
+    for (auto it = tokens.begin(); it != tokens.end(); ++it) {
+        const auto& token = *it;
+
+        if (token.type == TokenType::ParagraphBreak) {
+            currStyle = {};
+            continue;
+        }
+
+        if (token.IsHeading()) {
+            int64_t textRangeBegin = token.begin;
+            int64_t textRangeEnd;
+
+            // Seek to paragraph break, or end of text to compute `textRangeEnd`
+            ++it;
+            for (; it != tokens.end(); ++it) {
+                if (it->type == TokenType::ParagraphBreak) {
+                    textRangeEnd = it->begin;
+                    goto found;
+                }
+            }
+            textRangeEnd = in.src->GetLastTextIndex();
+        found:
+
+            // TODO handle formatting inside a heading
+            //      we don't render those currently so there is no use, let's not add complexity right now
+            outputTextRun({
+                .begin = textRangeBegin,
+                .end = textRangeEnd,
+                .style = {
+                    // NOTE: every other field is initialized to 0, i.e. false in this case
+                    .type = MakeHeadingLevel(Token::CalcHeadingLevel(token.type)),
+                },
+            });
+
+            currTextRunBegin = textRangeEnd;
+
+            continue;
+        }
+
         if (token.IsControlSequence() && token.HasPairedToken()) {
-            out.textRuns.push_back({
+            currStyle.type = TextStyleType::Regular;
+            outputTextRun({
                 .begin = currTextRunBegin,
                 .end = token.begin,
                 .style = currStyle,
@@ -321,13 +411,14 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
                     break;
                 default: UNREACHABLE;
             }
+            continue;
         }
     }
     // Add the last text range if there is any left
-    if (auto lastTextIdx = in.src->GetBackSize() > 0 ? in.src->GetBackEnd() : in.src->GetFrontEnd();
+    if (auto lastTextIdx = in.src->GetLastTextIndex();
         currTextRunBegin != lastTextIdx)
     {
-        out.textRuns.push_back({
+        outputTextRun({
             .begin = currTextRunBegin,
             .end = lastTextIdx,
             .style = currStyle,

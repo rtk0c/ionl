@@ -20,6 +20,9 @@ enum class TextStyleType {
     Title_END,
 };
 
+// Heading level: number of #'s used in writing this heading
+// e.g. # Heading -> 1
+//      ## Heading -> 2
 int CalcHeadingLevel(TextStyleType type);
 TextStyleType MakeHeadingLevel(int level);
 bool IsHeading(TextStyleType type);

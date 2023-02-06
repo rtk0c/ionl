@@ -63,6 +63,10 @@ Ionl::GapBuffer::~GapBuffer() {
     DeallocateBuffer(buffer);
 }
 
+int64_t Ionl::GapBuffer::GetLastTextIndex() const {
+    return GetBackSize() > 0 ? GetBackEnd() : GetFrontEnd();
+}
+
 std::string Ionl::GapBuffer::ExtractContent() const {
     auto frontBegin = buffer;
     auto frontEnd = buffer + frontSize;

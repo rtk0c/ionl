@@ -270,12 +270,17 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
             // Set for next iteration
             if (visionBuffer[0] == '\n') {
+                auto beginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
+                tokens.push_back({
+                    .begin = beginIdx,
+                    .end = beginIdx + 1,
+                    .headingLevel = currHeadingLevel,
+                    .type = TokenType::ParagraphBreak,
+                });
+
                 isBeginningOfLine = true;
                 isEscaping = false;
                 currHeadingLevel = 0;
-
-                auto beginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
-                tokens.push_back({ .begin = beginIdx, .end = beginIdx + 1, .type = TokenType::ParagraphBreak });
             } else {
                 isBeginningOfLine = false;
             }

@@ -3383,7 +3383,7 @@ const ImWchar* ImFont::CalcWordWrapPosition(float scale, const ImWchar* text, co
     return ImCalcWordWrapPosition(this, scale, text, text_end, wrap_width);
 }
 
-template <typename TIter>
+template <bool singleLineMode = false, typename TIter>
 ImVec2 ImCalcTextSize(const ImFont* font, float size, float max_width, float wrap_width, TIter text_begin, TIter text_end, TIter* remaining) 
 {
     if (!text_end)
@@ -3415,7 +3415,10 @@ ImVec2 ImCalcTextSize(const ImFont* font, float size, float max_width, float wra
                 line_width = 0.0f;
                 word_wrap_eol = NULL;
                 s = ImGui::CalcWordWrapNextLineStart(s, text_end); // Wrapping skips upcoming blanks
-                continue;
+                if constexpr (singleLineMode)
+                    break;
+                else
+                    continue;
             }
         }
 
@@ -3481,9 +3484,19 @@ ImVec2 ImFont::CalcTextSize(float size, float max_width, float wrap_width, const
     return ImCalcTextSize(this, size, max_width, wrap_width, text_begin, text_end, remaining);
 }
 
+ImVec2 ImFont::CalcTextLineSize(float size, float max_width, float wrap_width, const char* text_begin, const char* text_end, const char** remaining) const
+{
+    return ImCalcTextSize<true>(this, size, max_width, wrap_width, text_begin, text_end, remaining);
+}
+
 ImVec2 ImFont::CalcTextSize(float size, float max_width, float wrap_width, const ImWchar* text_begin, const ImWchar* text_end, const ImWchar** remaining) const
 {
     return ImCalcTextSize(this, size, max_width, wrap_width, text_begin, text_end, remaining);
+}
+
+ImVec2 ImFont::CalcTextLineSize(float size, float max_width, float wrap_width, const ImWchar* text_begin, const ImWchar* text_end, const ImWchar** remaining) const
+{
+    return ImCalcTextSize<true>(this, size, max_width, wrap_width, text_begin, text_end, remaining);
 }
 
 // Note: as with every ImDrawList drawing function, this expects that the font atlas texture is bound.

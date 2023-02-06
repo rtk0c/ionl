@@ -2992,7 +2992,9 @@ struct ImFont
     // 'max_width' stops rendering after a certain width (could be turned into a 2d size). FLT_MAX to disable.
     // 'wrap_width' enable automatic word-wrapping across multiple lines to fit into given width. 0.0f to disable.
     IMGUI_API ImVec2            CalcTextSize(float size, float max_width, float wrap_width, const char* text_begin, const char* text_end = NULL, const char** remaining = NULL) const; // utf8
+    IMGUI_API ImVec2            CalcTextLineSize(float size, float max_width, float wrap_width, const char* text_begin, const char* text_end = NULL, const char** remaining = NULL) const; // utf8
     IMGUI_API ImVec2            CalcTextSize(float size, float max_width, float wrap_width, const ImWchar* text_begin, const ImWchar* text_end = NULL, const ImWchar** remaining = NULL) const;
+    IMGUI_API ImVec2            CalcTextLineSize(float size, float max_width, float wrap_width, const ImWchar* text_begin, const ImWchar* text_end = NULL, const ImWchar** remaining = NULL) const;
     IMGUI_API const char*       CalcWordWrapPosition(float scale, const char* text, const char* text_end, float wrap_width) const;
     IMGUI_API const ImWchar*    CalcWordWrapPosition(float scale, const ImWchar* text, const ImWchar* text_end, float wrap_width) const;
     IMGUI_API void              RenderChar(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, ImWchar c) const;

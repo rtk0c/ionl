@@ -158,9 +158,7 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
         // Try to lay this [beg,end) on current line, and if we can't, retry with [remaining,end) until we are done with this TextRun
         while (true) {
             const ImWchar* remaining;
-            // `wrap_width` is for automatically laying the text in multiple lines (and return the size of all lines).
-            // We want to perform line wrapping ourselves, so we use `max_width` to instruct ImGui to stop after reaching the line width.
-            auto runDim = face.font->CalcTextSize(face.font->FontSize, in.viewportWidth, 0.0f, beg, end, &remaining);
+            auto runDim = face.font->CalcTextLineSize(face.font->FontSize, in.viewportWidth, in.viewportWidth, beg, end, &remaining);
 
             GlyphRun glyphRun;
             glyphRun.tr = textRun;
@@ -487,6 +485,15 @@ void Ionl::TextEdit::Show() {
         auto font = face.font;
         auto color = face.color == 0 ? styleTextColor : face.color;
         drawList->AddText(font, font->FontSize, absPos, color, &_tb->gapBuffer.buffer[glyphRun.tr.begin], &_tb->gapBuffer.buffer[glyphRun.tr.end]);
+
+        if (glyphRun.tr.style.isUnderline) {
+            float y = absPos.y + font->FontSize;
+            drawList->AddLine(ImVec2(absPos.x, y), ImVec2(absPos.x + glyphRun.horizontalAdvance, y), color);
+        }
+        if (glyphRun.tr.style.isStrikethrough) {
+            float y = absPos.y + font->FontSize / 2;
+            drawList->AddLine(ImVec2(absPos.x, y), ImVec2(absPos.x + glyphRun.horizontalAdvance, y), color);
+        }
     }
 
     // Draw cursor and selection

@@ -23,6 +23,9 @@ struct GlyphRun {
     // Position of the first glyph in this run, in text canvas space
     ImVec2 pos;
     float horizontalAdvance = 0.0f;
+
+    // Whether this TextRun is on a new line, created by soft wrapping
+    bool isSoftWrapped = false;
 };
 
 struct TextBuffer {
@@ -37,18 +40,17 @@ struct TextBuffer {
     TextBuffer(GapBuffer buf);
 };
 
+enum class CursorAffinity {
+    Irrelevant,
+    Upstream,
+    Downstream,
+};
+
 /// - Spans from ImGui::GetCursorPos().x, all the way to the right at max content width
 /// - Height depends on the text inside
 struct TextEdit {
     TextBuffer* _tb;
     std::vector<GlyphRun> _cachedGlyphRuns;
-
-    // Generates during render loop, a list of character indices which line wraps (both soft and hard wraps)
-    // This vector should always be sorted.
-    // - hard wrap: point to the \n
-    // - soft wrap: point to the character on the next line
-    // TODO maybe we can save text properties (current face, etc.) so we can resume parsing at any wrap point, and as a result avoid reparsing/rendering the whole document every time we move the cursor
-    ImVector<int64_t> _wrapPoints;
 
     // TODO should we move all of these to a global shared state like ImGui::InputText()?
     //   b/c there can only be one active text edit at any given time anyways, so this could simply this widget down to Ionl::TextEdit(GapBuffer& document);
@@ -71,14 +73,17 @@ struct TextEdit {
     //     [begin, end)
     // As such:
     // - if _cursorIdx == _anchorIdx, there is no selection
-
     int64_t _cursorIdx = 0;
     int64_t _anchorIdx = 0;
 
+    // Cursor affinity in the traditional text editing sense.
+    // Only meaningful when the cursor is at the beginning of a soft-wrapped GlyphRun.
+    CursorAffinity _cursorAffinity = CursorAffinity::Upstream;
+    size_t _cursorCurrGlyphRun = 0;
+
     // Offset of the glyph that the cursor is hovering, from draw origin
     ImVec2 _cursorVisualOffset;
-    // The font that the cursor is currently hovering above, determines things like cursor dimensions
-    ImFont* _cursorAssociatedFont = nullptr;
+    float _cursorVisualHeight = 0.0f;
     float _cursorAnimTimer = 0.0f;
 
     ImGuiID _id;
@@ -87,10 +92,6 @@ struct TextEdit {
 
     // Whether the cursor is on a wrapping point (end of a soft wrapped line).
     bool _cursorIsAtWrapPoint = false;
-
-    // false: the cursor is after the wrap (next line), or that no soft wrap is applied
-    // true: the cursor is before the wrap (prev line)
-    bool _cursorAffinity = false;
 
 #if IONL_DEBUG_FEATURES
     bool _debugShowBoundingBoxes = false;

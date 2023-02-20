@@ -116,12 +116,26 @@ void ShowDebugGlyphRun(const DebugShowContext& ctx, const GlyphRun& glyphRun) {
 }
 
 void ShowDebugGlyphRuns(const DebugShowContext& ctx, std::span<const GlyphRun> glyphRuns) {
-    ImGui::Text("Showing %zu GlyphRuns's:", glyphRuns.size());
+    ImGui::Text("Showing %zu GlyphRun's:", glyphRuns.size());
     for (size_t i = 0; i < glyphRuns.size(); ++i) {
         ImGui::Text("[%zu] ", i);
         ImGui::SameLine();
         ShowDebugGlyphRun(ctx, glyphRuns[i]);
     }
+}
+
+const char* StringifyBool(bool v) {
+    return v ? "true" : "false";
+}
+
+const char* StringifyCursorAffinity(CursorAffinity v) {
+    switch (v) {
+        using enum CursorAffinity;
+        case Irrelevant: return "Irrelevant";
+        case Upstream: return "Upstream";
+        case Downstream: return "Downstream";
+    }
+    return "";
 }
 #endif
 
@@ -156,16 +170,22 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
         const ImWchar* beg = &in.src->buffer[textRun.begin];
         const ImWchar* end = &in.src->buffer[textRun.end];
         // Try to lay this [beg,end) on current line, and if we can't, retry with [remaining,end) until we are done with this TextRun
+        int numGenerated = 0;
         while (true) {
+            numGenerated += 1;
+
             const ImWchar* remaining;
             auto runDim = face.font->CalcTextLineSize(face.font->FontSize, in.viewportWidth, in.viewportWidth, beg, end, &remaining);
 
             GlyphRun glyphRun;
             glyphRun.tr = textRun;
+            // If a TextRun emits multiple GlyphRun's, only the last one should have this property set -- we do it after this loop
+            glyphRun.tr.hasParagraphBreak = false;
             glyphRun.tr.begin = std::distance(in.src->PtrBegin(), beg);
             glyphRun.tr.end = std::distance(in.src->PtrBegin(), remaining);
             glyphRun.pos = currPos;
             glyphRun.horizontalAdvance = runDim.x;
+            glyphRun.isSoftWrapped = numGenerated >= 2;
             out.glyphRuns.push_back(std::move(glyphRun));
 
             currPos.x += runDim.x;
@@ -187,6 +207,9 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
             out.boundingBox.y += currLineDim.y + in.styles->linePadding;
             currLineDim = {};
         }
+
+        auto& lastOut = out.glyphRuns.back();
+        lastOut.tr.hasParagraphBreak = textRun.hasParagraphBreak;
 
         if (textRun.hasParagraphBreak) {
             currPos.x = 0;
@@ -234,6 +257,8 @@ void TryRefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
     te._cachedGlyphRuns = std::move(res.glyphRuns);
     te._cachedContentHeight = res.boundingBox.y;
     te._cachedDataVersion = tb.cacheDataVersion;
+
+    // TODO adjust cursor related information
 }
 
 bool IsCharAPartOfWord(ImWchar c) {
@@ -255,34 +280,107 @@ bool IsWordBreaking(ImWchar a, ImWchar b) {
 //
 // # Notes on terminology
 // "move towards" means to adjust the index forwards or backwards to the desired location, depending on `delta` being positive or negative.
-int64_t CalcAdjacentWordPos(GapBuffer& buf, int64_t index, int delta) {
+int64_t CalcAdjacentWordPos(GapBuffer& buf, int64_t logicalIndex, int delta) {
     GapBufferIterator it(buf);
-    it += index;
+    it += logicalIndex;
 
     int dIdx = delta > 0 ? 1 : -1; // "delta index"
     // TODO
 
-    return index;
+    return logicalIndex;
 }
 
-std::pair<int64_t, int64_t> FindLineWrapBoundsForIndex(const TextEdit& te, int64_t index) {
-    // First element greater than `index`
-    // NOTE: if `index` overlaps one of the bounds, it's always the lower bound `l`
+std::pair<size_t, int64_t> FindLineWrapBeforeIndex(std::span<const GlyphRun> glyphRuns, size_t startingGlyphRunIdx) {
+    assert(!glyphRuns.empty());
+    for (size_t i = startingGlyphRunIdx; i != -1; --i) {
+        auto& glyphRun = glyphRuns[i];
+        // Prioritize paragraph breaks over soft wrapping
+        if (glyphRun.tr.hasParagraphBreak && i != startingGlyphRunIdx) {
+            return { i + 1, glyphRuns[i + 1].tr.begin };
+        }
+        if (glyphRun.isSoftWrapped) {
+            return { i, glyphRun.tr.begin };
+        }
+    }
+    // We consider the very first GlyphRun wrapped, for cursor moving to it
+    return { 0, glyphRuns.front().tr.begin };
+}
 
-    auto ub = std::upper_bound(te._wrapPoints.begin(), te._wrapPoints.end(), index);
-    size_t l, u;
-    if (ub == te._wrapPoints.begin()) {
-        l = 0;
-        u = *ub;
-    } else if (ub == te._wrapPoints.end()) {
-        l = *(ub - 1);
-        u = te._tb->gapBuffer.GetContentSize();
+std::pair<size_t, int64_t> FindLineWrapAfterIndex(std::span<const GlyphRun> glyphRuns, size_t startingGlyphRunIdx) {
+    assert(!glyphRuns.empty());
+    for (size_t i = startingGlyphRunIdx; i < glyphRuns.size(); ++i) {
+        auto& glyphRun = glyphRuns[i];
+        if (glyphRun.isSoftWrapped && i != startingGlyphRunIdx) {
+            return { i, glyphRun.tr.begin };
+        }
+        if (glyphRun.tr.hasParagraphBreak) {
+            return { i, glyphRun.tr.end };
+        }
+    }
+    // Similarly, the very last GlyphRun is considered wrapped, for cursor moving to it
+    return { glyphRuns.size() - 1, glyphRuns.back().tr.end };
+}
+
+size_t FindGlyphRunContainingIndex(std::span<const GlyphRun> glyphRuns, size_t startingGlyphRunIdx, int64_t bufferIndex) {
+    assert(!glyphRuns.empty());
+    auto& startingGlyphRun = glyphRuns[startingGlyphRunIdx];
+
+    int delta;
+    size_t bound;
+    if (bufferIndex < startingGlyphRun.tr.begin) {
+        // Target index is before starting point
+        delta = -1;
+        bound = static_cast<size_t>(-1);
     } else {
-        l = *(ub - 1);
-        u = *ub;
+        // Target index is after starting point
+        delta = 1;
+        bound = glyphRuns.size();
     }
 
-    return { l, u };
+    for (size_t i = startingGlyphRunIdx; i != bound; i += delta) {
+        auto& r = glyphRuns[i];
+
+        if (bufferIndex >= r.tr.begin && bufferIndex < r.tr.end) {
+            return i;
+        }
+
+        // We also consider cursor on \n to be inside the GlyphRun that the \n belongs to
+        if (r.tr.hasParagraphBreak && bufferIndex == r.tr.end) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void RefreshCursorState(TextEdit& te) {
+    auto cursorBufIdx = MapLogicalIndexToBufferIndex(te._tb->gapBuffer, te._cursorIdx);
+    te._cursorCurrGlyphRun = FindGlyphRunContainingIndex(te._cachedGlyphRuns, te._cursorCurrGlyphRun, te._cursorIdx);
+    auto cursorGr = &te._cachedGlyphRuns[te._cursorCurrGlyphRun];
+
+    te._cursorIsAtWrapPoint = cursorGr->isSoftWrapped && cursorGr->tr.begin == cursorBufIdx;
+
+    const GlyphRun* visualGr;
+    const MarkdownFace* face;
+    float xOff;
+    if (te._cursorIsAtWrapPoint && te._cursorAffinity == Ionl::CursorAffinity::Upstream) {
+        visualGr = &te._cachedGlyphRuns[te._cursorCurrGlyphRun - 1];
+        face = &gMarkdownStylesheet.LookupFace(visualGr->tr.style);
+
+        xOff = visualGr->horizontalAdvance;
+    } else {
+        visualGr = cursorGr;
+        face = &gMarkdownStylesheet.LookupFace(visualGr->tr.style);
+
+        // Calculate width of text between start of GlyphRun to cursor
+        auto beg = &te._tb->gapBuffer.buffer[visualGr->tr.begin];
+        auto end = &te._tb->gapBuffer.buffer[cursorBufIdx];
+        auto dim = face->font->CalcTextSize(face->font->FontSize, std::numeric_limits<float>::max(), 0.0f, beg, end);
+        xOff = dim.x;
+    }
+    te._cursorVisualHeight = face->font->FontSize;
+    te._cursorVisualOffset.x = visualGr->pos.x + xOff;
+    te._cursorVisualOffset.y = visualGr->pos.y;
 }
 } // namespace
 
@@ -328,6 +426,9 @@ void Ionl::TextEdit::Show() {
     if (activeId != _id && userClicked) {
         activeId = _id;
 
+        // TODO for debugging purposes, remove after mosue click set cursor pos is implemented
+        RefreshCursorState(*this);
+
         // Adapted from imgui_widget.cpp Imgui::InputTextEx()
 
         ImGui::SetActiveID(_id, window);
@@ -351,70 +452,70 @@ void Ionl::TextEdit::Show() {
 
     // TODO update _cursorAssociatedFont and _cursorVisualOffset
     // Process keyboard inputs
-    if (activeId == _id && !g.ActiveIdIsJustActivated) {
+    // We skip all keyboard inputs if the text buffer is empty (i.e. no runs generated) because all of the operate some non-empty text sequence
+    if (activeId == _id && !g.ActiveIdIsJustActivated && !_cachedGlyphRuns.empty()) {
         bool isOSX = io.ConfigMacOSXBehaviors;
         bool isMovingWord = isOSX ? io.KeyAlt : io.KeyCtrl;
         bool isShortcutKey = isOSX ? (io.KeyMods == ImGuiMod_Super) : (io.KeyMods == ImGuiMod_Ctrl);
 
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
-            if (_cursorIsAtWrapPoint && !_cursorAffinity) {
-                _cursorAffinity = true;
+            if (_cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Downstream) {
+                _cursorAffinity = CursorAffinity::Upstream;
             } else {
                 _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, -1) : -1;
                 _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
-
-                _cursorIsAtWrapPoint = std::binary_search(_wrapPoints.begin(), _wrapPoints.end(), _cursorIdx);
-                // NOTE: when we move left from a soft-wrapped point, this is necessary to get out of the affinitive state
-                _cursorAffinity = false;
+                _cursorAffinity = CursorAffinity::Downstream;
             }
 
+            RefreshCursorState(*this);
             _cursorAnimTimer = 0.0f;
         } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
-            if (_cursorIsAtWrapPoint && _cursorAffinity) {
-                _cursorAffinity = false;
+            if (_cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Upstream) {
+                _cursorAffinity = CursorAffinity::Downstream;
             } else {
                 _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, +1) : +1;
                 _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
-
-                _cursorIsAtWrapPoint = std::binary_search(_wrapPoints.begin(), _wrapPoints.end(), _cursorIdx);
-                if (_cursorIsAtWrapPoint) {
-                    _cursorAffinity = true;
-                }
+                _cursorAffinity = CursorAffinity::Upstream;
             }
+
+            RefreshCursorState(*this);
             _cursorAnimTimer = 0.0f;
         } else if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
             if (isMovingWord) {
+                // Move to beginning of document
                 _cursorIdx = 0;
                 _anchorIdx = 0;
-                _cursorAffinity = false;
-                _cursorIsAtWrapPoint = false;
             } else {
-                auto [l, u] = FindLineWrapBoundsForIndex(*this, _cursorIdx);
-
-                _cursorIdx = l;
+                size_t starting = _cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Upstream
+                    ? _cursorCurrGlyphRun - 1
+                    : _cursorCurrGlyphRun;
+                auto [prevWrapPt, idx] = FindLineWrapBeforeIndex(_cachedGlyphRuns, starting);
+                _cursorIdx = MapBufferIndexToLogicalIndex(_tb->gapBuffer, idx);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
-
-                _cursorIsAtWrapPoint = false;
-                _cursorAffinity = false;
+                _cursorAffinity = CursorAffinity::Downstream;
             }
+
+            RefreshCursorState(*this);
+            _cursorAnimTimer = 0.0f;
         } else if (ImGui::IsKeyPressed(ImGuiKey_End)) {
             if (isMovingWord) {
+                // Move to end of document
                 _cursorIdx = bufContentSize;
                 _anchorIdx = bufContentSize;
-                _cursorAffinity = false;
-                _cursorIsAtWrapPoint = true;
             } else {
-                auto [l, u] = FindLineWrapBoundsForIndex(*this, _cursorIdx);
-
-                _cursorIdx = u;
+                size_t starting = _cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Upstream
+                    ? _cursorCurrGlyphRun - 1
+                    : _cursorCurrGlyphRun;
+                auto [prevWrapPt, idx] = FindLineWrapAfterIndex(_cachedGlyphRuns, starting);
+                _cursorIdx = MapBufferIndexToLogicalIndex(_tb->gapBuffer, idx);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
-
-                _cursorIsAtWrapPoint = true;
-                bool lineIsHardWrapped = u == bufContentSize || _tb->gapBuffer.buffer[u] == '\n';
-                _cursorAffinity = !lineIsHardWrapped;
+                _cursorAffinity = CursorAffinity::Upstream;
             }
+
+            RefreshCursorState(*this);
+            _cursorAnimTimer = 0.0f;
         } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
             // TODO
         } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
@@ -507,7 +608,7 @@ void Ionl::TextEdit::Show() {
             cursorPos.x,
             cursorPos.y + 1.5f,
             cursorPos.x + 1.0f,
-            cursorPos.y + _cursorAssociatedFont->FontSize - 0.5f,
+            cursorPos.y + _cursorVisualHeight - 0.5f,
         };
         if (cursorVisible) {
             drawList->AddLine(cursorRect.Min, cursorRect.GetBL(), ImGui::GetColorU32(ImGuiCol_Text));
@@ -532,6 +633,12 @@ void Ionl::TextEdit::Show() {
         }
     }
 
+    DebugShowContext ctx{
+        .bb = bb,
+        .sourceBeg = _tb->gapBuffer.PtrBegin(),
+        .sourceEnd = _tb->gapBuffer.PtrEnd(),
+    };
+
     ImGui::PushID(_id);
     if (ImGui::CollapsingHeader("TextEdit general debug")) {
         ImGui::Checkbox("Show bounding boxes", &_debugShowBoundingBoxes);
@@ -543,40 +650,19 @@ void Ionl::TextEdit::Show() {
         } else {
             ImGui::Text("Selection range: none");
         }
-        ImGui::Text("_cursorIsAtWrapPoint = %s", _cursorIsAtWrapPoint ? "true" : "false");
-        ImGui::Text("_cursorAffinity = %s", _cursorAffinity ? "true" : "false");
-        ImGui::Text("Wrap points: ");
-        ImGui::SameLine();
-        char wrapPointText[65536];
-        char* wrapPointTextWt = wrapPointText;
-        char* wrapPointTextEnd = std::end(wrapPointText);
-        for (int i = 0; i < _wrapPoints.size(); ++i) {
-            int wp = _wrapPoints[i];
-            int bufSize = wrapPointTextEnd - wrapPointTextWt;
-            int res = snprintf(wrapPointTextWt, bufSize, i != _wrapPoints.size() - 1 ? "%d, " : "%d", wp);
-
-            if (res < 0 || res >= bufSize) {
-                // NOTE: snprintf() always null terminates buffer even if there is not enough space
-                break;
-            }
-
-            // NOTE: snprintf() return value don't count the null termiantor
-            wrapPointTextWt += res;
-        }
-        *wrapPointTextWt = '\0';
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(wrapPointText);
-        ImGui::PopTextWrapPos();
+        ImGui::Text("_cursorIsAtWrapPoint = %s", StringifyBool(_cursorIsAtWrapPoint));
+        ImGui::Text("_cursorAffinity = %s", StringifyCursorAffinity(_cursorAffinity));
+        ImGui::Text("_cursorVisualOffset = (%f, %f)", _cursorVisualOffset.x, _cursorVisualOffset.y);
+        ImGui::Text("_cursorVisualHeight = %f", _cursorVisualHeight);
+        ImGui::Text("_cursorCurrGlyphRun = [%zu]", _cursorCurrGlyphRun);
+        ImGui::Indent();
+        ShowDebugGlyphRun(ctx, _cachedGlyphRuns[_cursorCurrGlyphRun]);
+        ImGui::Unindent();
     }
     if (ImGui::CollapsingHeader("TextEdit._tb->[TextRun]")) {
         ShowDebugTextRuns(_tb->gapBuffer.buffer, _tb->textRuns);
     }
     if (ImGui::CollapsingHeader("TextEdit.[GlyphRun]")) {
-        DebugShowContext ctx{
-            .bb = bb,
-            .sourceBeg = _tb->gapBuffer.PtrBegin(),
-            .sourceEnd = _tb->gapBuffer.PtrEnd(),
-        };
         ShowDebugGlyphRuns(ctx, _cachedGlyphRuns);
     }
     ImGui::PopID();
@@ -603,9 +689,11 @@ void Ionl::TextEdit::SetSelection(int64_t begin, int64_t end, bool cursorAtBegin
         _cursorIdx = end;
         _anchorIdx = begin;
     }
+    RefreshCursorState(*this);
 }
 
 void Ionl::TextEdit::SetCursor(int64_t cursor) {
     _cursorIdx = cursor;
     _anchorIdx = cursor;
+    RefreshCursorState(*this);
 }

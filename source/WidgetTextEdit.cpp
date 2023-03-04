@@ -359,11 +359,14 @@ void RefreshCursorState(TextEdit& te) {
     auto cursorGr = &te._cachedGlyphRuns[te._cursorCurrGlyphRun];
 
     te._cursorIsAtWrapPoint = cursorGr->isSoftWrapped && cursorGr->tr.begin == cursorBufIdx;
+    if (!te._cursorIsAtWrapPoint) {
+        te._cursorAffinity = CursorAffinity::Irrelevant;
+    }
 
     const GlyphRun* visualGr;
     const MarkdownFace* face;
     float xOff;
-    if (te._cursorIsAtWrapPoint && te._cursorAffinity == Ionl::CursorAffinity::Upstream) {
+    if (te._cursorIsAtWrapPoint && te._cursorAffinity == CursorAffinity::Upstream) {
         visualGr = &te._cachedGlyphRuns[te._cursorCurrGlyphRun - 1];
         face = &gMarkdownStylesheet.LookupFace(visualGr->tr.style);
 
@@ -450,7 +453,6 @@ void Ionl::TextEdit::Show() {
 
     int64_t bufContentSize = _tb->gapBuffer.GetContentSize();
 
-    // TODO update _cursorAssociatedFont and _cursorVisualOffset
     // Process keyboard inputs
     // We skip all keyboard inputs if the text buffer is empty (i.e. no runs generated) because all of the operate some non-empty text sequence
     if (activeId == _id && !g.ActiveIdIsJustActivated && !_cachedGlyphRuns.empty()) {
@@ -465,6 +467,8 @@ void Ionl::TextEdit::Show() {
                 _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, -1) : -1;
                 _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
+
+                // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
                 _cursorAffinity = CursorAffinity::Downstream;
             }
 
@@ -477,6 +481,8 @@ void Ionl::TextEdit::Show() {
                 _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, +1) : +1;
                 _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
+
+                // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
                 _cursorAffinity = CursorAffinity::Upstream;
             }
 
@@ -492,8 +498,11 @@ void Ionl::TextEdit::Show() {
                     ? _cursorCurrGlyphRun - 1
                     : _cursorCurrGlyphRun;
                 auto [prevWrapPt, idx] = FindLineWrapBeforeIndex(_cachedGlyphRuns, starting);
+
                 _cursorIdx = MapBufferIndexToLogicalIndex(_tb->gapBuffer, idx);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
+
+                // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
                 _cursorAffinity = CursorAffinity::Downstream;
             }
 
@@ -509,8 +518,11 @@ void Ionl::TextEdit::Show() {
                     ? _cursorCurrGlyphRun - 1
                     : _cursorCurrGlyphRun;
                 auto [prevWrapPt, idx] = FindLineWrapAfterIndex(_cachedGlyphRuns, starting);
+
                 _cursorIdx = MapBufferIndexToLogicalIndex(_tb->gapBuffer, idx);
                 if (!io.KeyShift) _anchorIdx = _cursorIdx;
+
+                // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
                 _cursorAffinity = CursorAffinity::Upstream;
             }
 

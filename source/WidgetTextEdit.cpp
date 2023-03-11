@@ -179,13 +179,15 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
 
             GlyphRun glyphRun;
             glyphRun.tr = textRun;
-            // If a TextRun emits multiple GlyphRun's, only the last one should have this property set -- we do it after this loop
-            glyphRun.tr.hasParagraphBreak = false;
             glyphRun.tr.begin = std::distance(in.src->PtrBegin(), beg);
             glyphRun.tr.end = std::distance(in.src->PtrBegin(), remaining);
+            // If a TextRun emits multiple GlyphRun's, only the last one should have this property set -- we do it after this loop [1]
+            glyphRun.tr.hasParagraphBreak = false;
+            // Similarly this should be set for everyone but the last GlyphRun
+            glyphRun.isSoftWrapped = numGenerated >= 2;
             glyphRun.pos = currPos;
             glyphRun.horizontalAdvance = runDim.x;
-            glyphRun.isSoftWrapped = numGenerated >= 2;
+            glyphRun.height = runDim.y;
             out.glyphRuns.push_back(std::move(glyphRun));
 
             currPos.x += runDim.x;
@@ -208,6 +210,7 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
             currLineDim = {};
         }
 
+        // Set last GlyphRun's property, see above [1]
         auto& lastOut = out.glyphRuns.back();
         lastOut.tr.hasParagraphBreak = textRun.hasParagraphBreak;
 
@@ -364,26 +367,66 @@ void RefreshCursorState(TextEdit& te) {
     }
 
     const GlyphRun* visualGr;
-    const MarkdownFace* face;
     float xOff;
     if (te._cursorIsAtWrapPoint && te._cursorAffinity == CursorAffinity::Upstream) {
         visualGr = &te._cachedGlyphRuns[te._cursorCurrGlyphRun - 1];
-        face = &gMarkdownStylesheet.LookupFace(visualGr->tr.style);
-
         xOff = visualGr->horizontalAdvance;
     } else {
         visualGr = cursorGr;
-        face = &gMarkdownStylesheet.LookupFace(visualGr->tr.style);
+        auto& face = gMarkdownStylesheet.LookupFace(visualGr->tr.style);
 
         // Calculate width of text between start of GlyphRun to cursor
         auto beg = &te._tb->gapBuffer.buffer[visualGr->tr.begin];
         auto end = &te._tb->gapBuffer.buffer[cursorBufIdx];
-        auto dim = face->font->CalcTextSize(face->font->FontSize, std::numeric_limits<float>::max(), 0.0f, beg, end);
+        auto dim = face.font->CalcTextSize(face.font->FontSize, std::numeric_limits<float>::max(), 0.0f, beg, end);
         xOff = dim.x;
     }
-    te._cursorVisualHeight = face->font->FontSize;
+    te._cursorVisualHeight = visualGr->height;
     te._cursorVisualOffset.x = visualGr->pos.x + xOff;
     te._cursorVisualOffset.y = visualGr->pos.y;
+}
+
+// mouseX and mouseY should center on draw origin
+std::pair<int64_t, CursorAffinity> CalcCursorStateFromMouse(const TextEdit& te, float mouseX, float mouseY) {
+    auto it = te._cachedGlyphRuns.begin();
+
+    // Advance to the desired line by searching vertically
+    while (it != te._cachedGlyphRuns.end()) {
+        if (it->pos.y + it->height >= mouseY) {
+            break;
+        }
+        ++it;
+    }
+
+    auto lineBegin = it;
+    while (it != te._cachedGlyphRuns.end()) {
+        auto& face = gMarkdownStylesheet.LookupFace(it->tr.style);
+        float x = it->pos.x;
+        for (int64_t i = it->tr.begin; i < it->tr.end; ++i) {
+            ImWchar ch = te._tb->gapBuffer.buffer[i];
+            float w = face.font->GetCharAdvance(ch);
+            // We consider the cursor to land between two characters 'ab' if it's between the halfway point of both glyphs
+            // (if the cursor is inside the latter half of 'a', it will be caught by the iteration of 'b')
+            if (mouseX < (x + w / 2)) {
+                return { i, CursorAffinity::Irrelevant };
+            }
+            x += w;
+        }
+
+        // Reached end of line, declare cursor to be on the last char
+        if (it->isSoftWrapped && it != lineBegin) {
+            return { it->tr.begin, CursorAffinity::Upstream };
+        }
+        if (it->tr.hasParagraphBreak) {
+            // On \n
+            return { it->tr.end, CursorAffinity::Irrelevant };
+        }
+
+        ++it;
+    }
+
+    // Place at end of document if none of the lines contain the cursor position (outside content area)
+    return { te._tb->gapBuffer.GetLastTextIndex(), CursorAffinity::Irrelevant };
 }
 } // namespace
 
@@ -556,6 +599,18 @@ void Ionl::TextEdit::Show() {
         } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_A)) {
             // Select all
             // TODO
+        }
+
+        float mouseX = io.MousePos.x - bb.Min.x;
+        float mouseY = io.MousePos.y - bb.Min.y;
+
+        if (io.MouseClicked[ImGuiMouseButton_Left]) {
+            auto [idx, affinity] = CalcCursorStateFromMouse(*this, mouseX, mouseY);
+            _cursorIdx = MapBufferIndexToLogicalIndex(_tb->gapBuffer, idx);
+            if (!io.KeyShift) _anchorIdx = _cursorIdx;
+            _cursorAffinity = affinity;
+            RefreshCursorState(*this);
+            _cursorAnimTimer = 0.0f;
         }
 
         // Process character inputs

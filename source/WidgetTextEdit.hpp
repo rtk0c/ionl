@@ -22,7 +22,8 @@ struct GlyphRun {
 
     // Position of the first glyph in this run, in text canvas space
     ImVec2 pos;
-    float horizontalAdvance = 0.0f;
+    float horizontalAdvance = 0.0f; // == <used MarkdownStylesheet>.LookupFace(this->tr.style).CalcTextSize(... contents of this GlyphRun ...)
+    float height = 0.0f; // == <used MarkdownStylesheet>.LookupFace(this->tr.style).FontSize
 
     // Whether this TextRun is on a new line, created by soft wrapping
     bool isSoftWrapped = false;

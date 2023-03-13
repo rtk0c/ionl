@@ -175,6 +175,8 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
             numGenerated += 1;
 
             const ImWchar* remaining;
+            // Use ImFont::CalcTextLineSize instead of ImFont::CalcTextSize to get line breaking on word boundary,
+            // instead of on any arbitrary character implemented by the former.
             auto runDim = face.font->CalcTextLineSize(face.font->FontSize, in.viewportWidth, in.viewportWidth, beg, end, &remaining);
 
             GlyphRun glyphRun;

@@ -241,7 +241,7 @@ void RefreshTextBufferCachedData(TextBuffer& tb) {
     tb.cacheDataVersion += 1;
 }
 
-void TryRefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
+void RefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
     TextBuffer& tb = *te._tb;
 
     if (te._cachedDataVersion == tb.cacheDataVersion) {
@@ -455,7 +455,7 @@ void Ionl::TextEdit::Show() {
     // Performs text layout if necessary
     // -> updates _cachedGlyphRuns
     // -> updates _cachedContentHeight
-    TryRefreshTextEditCachedData(*this, contentRegionAvail.x);
+    RefreshTextEditCachedData(*this, contentRegionAvail.x);
 
     ImVec2 widgetSize(contentRegionAvail.x, _cachedContentHeight);
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + widgetSize };

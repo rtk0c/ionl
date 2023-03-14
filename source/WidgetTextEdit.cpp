@@ -139,6 +139,13 @@ const char* StringifyCursorAffinity(CursorAffinity v) {
 }
 #endif
 
+ImVec2 CalcSubTextRunDim(const TextBuffer& tb, const TextRun& tr, int64_t idxBeg, int64_t idxEnd) {
+    auto& face = gMarkdownStylesheet.LookupFace(tr.style);
+    auto beg = &tb.gapBuffer.buffer[idxBeg];
+    auto end = &tb.gapBuffer.buffer[idxEnd];
+    return face.font->CalcTextSize(face.font->FontSize, std::numeric_limits<float>::max(), 0.0f, beg, end);
+}
+
 struct LayoutInput {
     // [Required] Markdown styling.
     const MarkdownStylesheet* styles;
@@ -361,7 +368,7 @@ size_t FindGlyphRunContainingIndex(std::span<const GlyphRun> glyphRuns, size_t s
 
 void RefreshCursorState(TextEdit& te) {
     auto cursorBufIdx = MapLogicalIndexToBufferIndex(te._tb->gapBuffer, te._cursorIdx);
-    te._cursorCurrGlyphRun = FindGlyphRunContainingIndex(te._cachedGlyphRuns, te._cursorCurrGlyphRun, te._cursorIdx);
+    te._cursorCurrGlyphRun = FindGlyphRunContainingIndex(te._cachedGlyphRuns, te._cursorCurrGlyphRun, cursorBufIdx);
     auto cursorGr = &te._cachedGlyphRuns[te._cursorCurrGlyphRun];
 
     te._cursorIsAtWrapPoint = cursorGr->isSoftWrapped && cursorGr->tr.begin == cursorBufIdx;
@@ -376,13 +383,8 @@ void RefreshCursorState(TextEdit& te) {
         xOff = visualGr->horizontalAdvance;
     } else {
         visualGr = cursorGr;
-        auto& face = gMarkdownStylesheet.LookupFace(visualGr->tr.style);
-
         // Calculate width of text between start of GlyphRun to cursor
-        auto beg = &te._tb->gapBuffer.buffer[visualGr->tr.begin];
-        auto end = &te._tb->gapBuffer.buffer[cursorBufIdx];
-        auto dim = face.font->CalcTextSize(face.font->FontSize, std::numeric_limits<float>::max(), 0.0f, beg, end);
-        xOff = dim.x;
+        xOff = CalcSubTextRunDim(*te._tb, visualGr->tr, visualGr->tr.begin, cursorBufIdx).x;
     }
     te._cursorVisualHeight = visualGr->height;
     te._cursorVisualOffset.x = visualGr->pos.x + xOff;
@@ -647,6 +649,61 @@ void Ionl::TextEdit::Show() {
     auto drawList = window->DrawList;
 
     auto styleTextColor = ImGui::GetColorU32(ImGuiCol_Text);
+    auto styleSelectionColor = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+
+    // Draw selection if one exists
+    if (activeId == _id && _cursorIdx != _anchorIdx) {
+        // TODO possible optimization: start searching for selection end GlyphRun at whichever location is closer, _cursorCurrGlyphRun or end of document
+        auto selBegin = MapBufferIndexToLogicalIndex(_tb->gapBuffer, this->GetSelectionBegin());
+        auto selBeginGrIdx = FindGlyphRunContainingIndex(_cachedGlyphRuns, _cursorCurrGlyphRun, selBegin);
+        auto selEnd = MapBufferIndexToLogicalIndex(_tb->gapBuffer, this->GetSelectionEnd());
+        auto selEndGrIdx = FindGlyphRunContainingIndex(_cachedGlyphRuns, _cursorCurrGlyphRun, selEnd);
+
+        // Defensive: in case something goes wrong, we just show an error and skip drawing
+        if (selBeginGrIdx != -1 && selEndGrIdx != -1) {
+            if (selBeginGrIdx == selEndGrIdx) {
+                auto& gr = _cachedGlyphRuns[selBeginGrIdx];
+                auto pMin = bb.Min + gr.pos;
+                pMin.x += CalcSubTextRunDim(*_tb, gr.tr, gr.tr.begin, selBegin).x;
+                auto pMax = bb.Min + gr.pos;
+                pMax.x += gr.horizontalAdvance - CalcSubTextRunDim(*_tb, gr.tr, selEnd, gr.tr.end).x;
+                pMax.y += gr.height;
+                drawList->AddRectFilled(pMin, pMax, styleSelectionColor);
+            } else {
+                ImVec2 pMin, pMax;
+
+                // Draw selection for first GlyphRun
+                auto& selBeginGr = _cachedGlyphRuns[selBeginGrIdx];
+                pMin = bb.Min + selBeginGr.pos;
+                pMin.x += CalcSubTextRunDim(*_tb, selBeginGr.tr, selBeginGr.tr.begin, selBegin).x;
+                pMax = bb.Min + selBeginGr.pos + ImVec2(selBeginGr.horizontalAdvance, selBeginGr.height);
+                drawList->AddRectFilled(pMin, pMax, styleSelectionColor);
+
+                // Draw in between `selBeginGrIdx` and `selEndGrIdx`
+                for (int64_t grIdx = selBeginGrIdx + 1; grIdx < selEndGrIdx; ++grIdx) {
+                    auto& gr = _cachedGlyphRuns[grIdx];
+                    drawList->AddRectFilled(
+                        bb.Min + gr.pos,
+                        bb.Min + gr.pos + ImVec2(gr.horizontalAdvance, gr.height),
+                        styleSelectionColor);
+                }
+
+                // Draw selection for last GlyphRun
+                auto& selEndGr = _cachedGlyphRuns[selEndGrIdx];
+                pMin = bb.Min + selEndGr.pos;
+                pMax = bb.Min + selEndGr.pos;
+                pMax.x += CalcSubTextRunDim(*_tb, selEndGr.tr, selEndGr.tr.begin, selEnd).x;
+                pMax.y += selEndGr.height;
+                drawList->AddRectFilled(pMin, pMax, styleSelectionColor);
+            }
+        } else {
+            ImGui::BeginTooltip();
+            ImGui::Text("Error: cannot find GlyphRun corresponding to selection begin or end. This is a bug, please report to developer immediately.");
+            ImGui::Text("selection begin = %ld, queried GlyphRun index = %zu", selBegin, selBeginGrIdx);
+            ImGui::Text("selection end = %ld, queried GlyphRun index = %zu", selEnd, selEndGrIdx);
+            ImGui::EndTooltip();
+        }
+    }
 
     // Draw text
     for (auto& glyphRun : _cachedGlyphRuns) {
@@ -667,7 +724,7 @@ void Ionl::TextEdit::Show() {
         }
     }
 
-    // Draw cursor and selection
+    // Draw cursor
     // TODO move drawing cursor blinking outside the ImGui loop
     if (activeId == _id) {
         _cursorAnimTimer += io.DeltaTime;
@@ -714,7 +771,7 @@ void Ionl::TextEdit::Show() {
         ImGui::Checkbox("Show bounding boxes", &_debugShowBoundingBoxes);
 
         ImGui::Text("_cursorIdx = %zu", _cursorIdx);
-        ImGui::Text("_anchorIdx = %zu", _cursorIdx);
+        ImGui::Text("_anchorIdx = %zu", _anchorIdx);
         if (HasSelection()) {
             ImGui::Text("Selection range: [%zu,%zu)", GetSelectionBegin(), GetSelectionEnd());
         } else {

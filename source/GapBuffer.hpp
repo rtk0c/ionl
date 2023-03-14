@@ -47,8 +47,11 @@ struct GapBuffer {
 
     int64_t GetContentSize() const { return bufferSize - gapSize; }
 
-    /// If back is non-empty, return back end index; otherwise return front end index.
+    /// Find the index to the last valid character in buffer.
+    /// If there is no valid text in buffer at all, return 0.
     int64_t GetLastTextIndex() const;
+    /// Find the end index for the last valid text range: if back is non-empty, return back end index; otherwise return front end index.
+    int64_t GetLastTextEnd() const;
 
     int64_t GetFrontBegin() const { return 0; }
     int64_t GetFrontEnd() const { return GetGapBegin(); }

@@ -423,12 +423,12 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
         }
     }
     // Add the last text range if there is any left
-    if (auto lastTextIdx = in.src->GetLastTextIndex();
-        currTextRunBegin != lastTextIdx)
+    if (auto lastTextEnd = in.src->GetLastTextEnd();
+        currTextRunBegin != lastTextEnd)
     {
         outputTextRun({
             .begin = currTextRunBegin,
-            .end = lastTextIdx,
+            .end = lastTextEnd,
             .style = currStyle,
         });
     }

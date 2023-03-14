@@ -64,6 +64,12 @@ Ionl::GapBuffer::~GapBuffer() {
 }
 
 int64_t Ionl::GapBuffer::GetLastTextIndex() const {
+    if (GetBackSize() > 0) return GetBackEnd() - 1;
+    if (GetFrontSize() > 0) return GetFrontEnd() - 1;
+    return 0;
+}
+
+int64_t Ionl::GapBuffer::GetLastTextEnd() const {
     return GetBackSize() > 0 ? GetBackEnd() : GetFrontEnd();
 }
 

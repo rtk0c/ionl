@@ -433,6 +433,38 @@ std::pair<int64_t, CursorAffinity> CalcCursorStateFromMouse(const TextEdit& te, 
     // Place at end of document if none of the lines contain the cursor position (outside content area)
     return { te._tb->gapBuffer.GetLastTextIndex(), CursorAffinity::Irrelevant };
 }
+
+// true => accept
+// false => discard
+bool FilterInputCharacter(ImWchar c) {
+    if (std::iscntrl(c))
+        return false;
+
+    // 1. Tab/shift+tab should be handled by the text bullet logic outside for indent/dedent, we don't care
+    // 2. If we wanted this, polling for key is better anyway (see logic in ImGui::InputTextEx)
+    if (c != '\t')
+        return false;
+
+    return true;
+}
+
+// Post-conditions:
+// - _cursorIdx (which is a logical index) remains unchanged
+// - gapBuffer.GetGapBegin() == MapLogicalIndexToBufferIndex(_cursorIdx)
+void MoveGapToCursor(TextEdit& te) {
+    MoveGapToLogicalIndex(te._tb->gapBuffer, te._cursorIdx);
+}
+
+void InsertAtCursor(TextEdit& te, const ImWchar* text, size_t size) {
+    if (te.HasSelection()) {
+        // TODO handle replacement of selection
+    } else {
+        MoveGapToCursor(te);
+        InsertAtGap(te._tb->gapBuffer, text, size);
+        te._cursorIdx += size;
+        te._anchorIdx = te._cursorIdx;
+    }
+}
 } // namespace
 
 Ionl::TextBuffer::TextBuffer(GapBuffer buf)
@@ -625,24 +657,17 @@ void Ionl::TextEdit::Show() {
             bool ignoreCharInputs = (io.KeyCtrl && !io.KeyAlt) || (isOSX && io.KeySuper);
             if (!ignoreCharInputs) {
                 for (int i = 0; i < io.InputQueueCharacters.Size; ++i) {
-                    auto c = io.InputQueueCharacters[i];
-
-                    // Skips
-                    if (std::iscntrl(c)) continue;
-                    // 1. Tab/shift+tab should be handled by the text bullet logic outside for indent/dedent, we don't care
-                    // 2. If we wanted this, polling for key is better anyway
-                    if (c == '\t') continue;
-                    // TODO maybe we should reuse InputTextFilterCharacter in imgui_widgets.cpp
-
-                    // Insert character into buffer
-                    // TODO
+                    ImWchar c = io.InputQueueCharacters[i];
+                    if (FilterInputCharacter(c))
+                        continue;
+                    InsertAtCursor(*this, &c, 1);
                 }
+                io.InputQueueCharacters.resize(0);
+
+                // NOTE: this TextEdit's cache will be refreshed next frame
+                RefreshTextBufferCachedData(*_tb);
+                RefreshCursorState(*this);
             }
-
-            io.InputQueueCharacters.resize(0);
-
-            // NOTE: this TextEdit's cache will be refreshed next frame
-            RefreshTextBufferCachedData(*_tb);
         }
     }
 

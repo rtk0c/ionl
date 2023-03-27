@@ -143,18 +143,21 @@ int64_t Ionl::AdjustBufferIndex(const GapBuffer& buffer, int64_t idx, int64_t de
     }
 }
 
-void Ionl::MoveGap(Ionl::GapBuffer& buf, size_t newIdx) {
-    size_t oldIdx = buf.frontSize;
+void Ionl::MoveGapToBufferIndex(Ionl::GapBuffer& buf, int64_t newIdx) {
+    int64_t oldIdx = buf.frontSize;
     if (oldIdx == newIdx) return;
 
     // NOTE: we must use memmove() because gap size may be smaller than movement distance, in which case the src region and dst region will overlap
-    auto frontEnd = buf.buffer + buf.frontSize;
-    auto backBegin = buf.buffer + buf.frontSize + buf.gapSize;
+    auto frontEnd = buf.buffer + buf.GetFrontEnd();
+    auto backBegin = buf.buffer + buf.GetBackBegin();
     if (oldIdx < newIdx) {
         // Moving forwards
 
+        if (buf.bufferSize - newIdx < buf.gapSize) {
+            newIdx = buf.bufferSize - buf.gapSize;
+        }
         size_t size = newIdx - oldIdx;
-        memmove(frontEnd, backBegin, newIdx - oldIdx);
+        memmove(frontEnd, backBegin, size);
     } else /* oldIdx > newIdx */ {
         // Moving backwards
 
@@ -164,18 +167,53 @@ void Ionl::MoveGap(Ionl::GapBuffer& buf, size_t newIdx) {
     buf.frontSize = newIdx;
 }
 
-void Ionl::WidenGap(Ionl::GapBuffer& buf, size_t newGapSize) {
+void Ionl::MoveGapToLogicalIndex(GapBuffer& buf, int64_t newIdxLogical) {
+    // To achieve the effect of moving the gap to logical index, it turns out we just need to shift the difference
+    // between the existing gap and desired new gap location. (Moving backwards or `oldIdx > newIdx` should be trivial
+    // and is the same as MoveGapToBufferIndex(), therefore it's not illustrated here).
+    //
+    //              newIdxLogical
+    //                    v
+    //     *****------*********
+    //             ┏━━└──┘
+    //             ┃
+    //             🠛
+    //          ┌──┐
+    //     *********------*****
+    //              ^      ^
+    //              |  newIdxLogical, also gap end
+    //          gap begin
+
+    int64_t newIdx = MapLogicalIndexToBufferIndex(buf, newIdxLogical);
+    int64_t oldIdx = buf.frontSize;
+    int64_t backBegin = buf.GetBackBegin();
+    int64_t frontEnd = buf.GetFrontEnd();
+    if (oldIdx == newIdx) return;
+
+    if (oldIdx < newIdx) {
+        size_t size = newIdx - backBegin;
+        memmove(buf.buffer + frontEnd, buf.buffer + backBegin, size);
+        buf.frontSize = frontEnd + size;
+    } else /* oldIdx > newIdx */ {
+        size_t size = oldIdx - newIdx;
+        memmove(buf.buffer + backBegin - size, buf.buffer + frontEnd - size, size);
+        buf.frontSize = newIdx;
+    }
+}
+
+void Ionl::WidenGap(Ionl::GapBuffer& buf, size_t requestedGapSize) {
     // Some assumptions:
     // - Increasing the gap size means the user is editing this buffer, which means they'll probably edit it some more
     // - Hence, it's likely that this buffer will be reallocated multiple times in the future
     // - Hence, we round buffer size to a power of 2 to reduce malloc() overhead
 
-    size_t frontSize = buf.frontSize;
-    size_t oldBackSize = buf.bufferSize - buf.frontSize - buf.gapSize;
-    size_t oldGapSize = buf.gapSize;
+    int64_t frontSize = buf.GetFrontSize();
+    int64_t backSize = buf.GetBackSize();
+    // `GapBuffer::gapSize` will be updated as a result of this function call
+    int64_t oldGapSize = buf.GetGapSize();
 
-    size_t newBufSize = ImUpperPowerOfTwo(buf.bufferSize);
-    size_t minimumBufSize = buf.bufferSize - buf.gapSize + newBufSize;
+    int64_t newBufSize = ImUpperPowerOfTwo(buf.bufferSize);
+    int64_t minimumBufSize = buf.GetContentSize() + requestedGapSize;
     // TODO keep a reasonable size once we get above e.g. 8KB?
     do {
         newBufSize *= 2;
@@ -185,12 +223,38 @@ void Ionl::WidenGap(Ionl::GapBuffer& buf, size_t newGapSize) {
 
     buf.bufferSize = newBufSize;
     buf.frontSize /*keep intact*/;
-    buf.gapSize = newBufSize - frontSize - oldBackSize;
+    buf.gapSize = newBufSize - frontSize - backSize;
 
     memmove(
         /*New back's location*/ buf.buffer + frontSize + buf.gapSize,
         /*Old back*/ buf.buffer + frontSize + oldGapSize,
-        oldBackSize);
+        backSize);
+}
+
+void Ionl::InsertAtGap(GapBuffer& buf, const ImWchar* text, size_t size) {
+    if (buf.GetGapSize() <= size) {
+        // Add 1 to void having a 0-length gap
+        WidenGap(buf, size + 1);
+    }
+
+    assert(buf.gapSize > size);
+    memcpy(buf.buffer + buf.GetGapBegin(), text, size);
+    buf.frontSize += size;
+    buf.gapSize -= size;
+}
+
+void Ionl::InsertAtGap(GapBuffer& buf, const char* text, size_t size) {
+    auto numCodepoint = ImTextCountCharsFromUtf8(text, text + size);
+    if (buf.GetBackSize() <= numCodepoint) {
+        WidenGap(buf, numCodepoint + 1);
+    }
+
+    assert(buf.gapSize > numCodepoint);
+    const char* remaining;
+    ImTextStrFromUtf8NoNullTerminate(buf.buffer + buf.GetGapBegin(), buf.gapSize, text, text + size, &remaining);
+    assert(remaining == text + size);
+    buf.frontSize += numCodepoint;
+    buf.gapSize -= numCodepoint;
 }
 
 // clang-format off

@@ -106,7 +106,9 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
     struct Token {
         int64_t begin;
         int64_t end;
-        size_t pairedTokenIdx = kInvalidTokenIdx;
+        // For some reason MSVC rejects this (referring to a local variable?)
+//        size_t pairedTokenIdx = kInvalidTokenIdx;
+        size_t pairedTokenIdx = std::numeric_limits<size_t>::max();
         int headingLevel = 0;
         TokenType type;
         bool dead = false; //< Flag used to mark weather this control sequence token is allowed to have a match
@@ -125,7 +127,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
     std::vector<Token> tokens;
 
     // The characters inside the parser's processing area (for size N, basically 1 current char + N-1 lookahead chars)
-    constexpr size_t kVisionSize = 3;
+    constexpr int64_t kVisionSize = 3;
     ImWchar visionBuffer[kVisionSize] = {};
 
     bool isEscaping = false;

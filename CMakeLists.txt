@@ -3,8 +3,14 @@ project(Ionl LANGUAGES CXX)
 
 option(Ionl_DEBUG_FEATURES "Master flag for enabling debugging features" OFF)
 
-include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
-conan_basic_setup()
+find_package(date CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(Freetype REQUIRED)
+find_package(glad CONFIG REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
+find_package(robin_hood CONFIG REQUIRED)
+# TODO support non-vcpkg version as well?
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
 
 file(GLOB_RECURSE IonlApp_SRC_FILES
     source/*.h
@@ -22,7 +28,13 @@ PRIVATE
 )
 target_link_libraries(IonlApp
 PRIVATE
-    ${CONAN_LIBS}
+    date::date date::date-tz
+    fmt::fmt
+    Freetype::Freetype
+    glad::glad
+    glfw
+    robin_hood::robin_hood
+    unofficial::sqlite3::sqlite3
 )
 target_compile_definitions(IonlApp
 PRIVATE

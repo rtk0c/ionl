@@ -1,0 +1,13 @@
+{
+	"name": "ionl",
+	"version": "0.1.0",
+	"dependencies": [
+		"fmt",
+		"date",
+		"robin-hood-hashing",
+		"glad",
+		"glfw3",
+		"freetype",
+		"sqlite3"
+	]
+} 

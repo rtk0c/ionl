@@ -2,9 +2,12 @@
 
 #include "imgui_internal.h"
 
+#include <fmt/format.h>
+#include <fmt/ostream.h>
 #include <algorithm>
 #include <cassert>
 #include <span>
+#include <sstream>
 #include <utility>
 
 using namespace std::literals;
@@ -77,24 +80,34 @@ void ShowDebugTextRuns(const TChar* source, std::span<const TextRun> textRuns) {
     }
 }
 
-void PrintDebugTextRun(std::string_view source, const TextRun& tr) {
-    auto substr = source.substr(tr.begin, tr.end - tr.begin);
-    printf("[%3zu,%3zu) %c%c%c%c%c \"%.*s\"\n",
+template <typename TStream>
+void PrintDebugTextRun(TStream&& out, std::string_view source, const TextRun& tr) {
+    std::string_view segment;
+    if (source.empty()) {
+        segment = "[OMITTED]"sv;
+    } else {
+        segment = source.substr(tr.begin, tr.end - tr.begin);
+    }
+    fmt::print(out,
+        // {:6} - force pad to 3 characters wide for alignment in the terminal
+        "[{:6},{:6}) {}{}{}{}{} \"{}\"\n",
         tr.begin,
         tr.end,
+        // Text property flags
         tr.style.isBold ? 'b' : '-',
         tr.style.isItalic ? 'i' : '-',
         tr.style.isUnderline ? 'u' : '-',
         tr.style.isStrikethrough ? 's' : '-',
         tr.style.isMonospace ? 'm' : '-',
-        (int)substr.size(),
-        substr.begin());
+        segment);
 }
 
-void PrintDebugTextRuns(std::string_view source, std::span<const TextRun> textRuns) {
+template <typename TStream>
+void PrintDebugTextRuns(TStream&& out, std::string_view source, std::span<const TextRun> textRuns) {
     for (size_t i = 0; i < textRuns.size(); ++i) {
-        printf("[%zu] ", i);
-        PrintDebugTextRun(source, textRuns[i]);
+        fmt::print(out, "[{}] ", i);
+        PrintDebugTextRun(out, source, textRuns[i]);
+        out << ' ';
     }
 }
 
@@ -162,6 +175,7 @@ struct LayoutOutput {
     ImVec2 boundingBox;
 };
 
+// TODO might be an idea to stop showing any text if viewportWidth is smaller than a certain threshold
 LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
     LayoutOutput out;
 
@@ -186,6 +200,15 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
             // instead of on any arbitrary character implemented by the former.
             // TODO don't strip whitespace at end of line, we need it to be inside a GlyphRun for cursor position code to function correctly
             auto runDim = face.font->CalcTextLineSize(face.font->FontSize, in.viewportWidth, in.viewportWidth, beg, end, &remaining);
+            // `beg` acts as the `remaining` from the last iteration (and for the first iteration, if nothing is placed hence `remaining == beg`, we should bail out too)
+            if (remaining == beg) {
+                // The inner algorithm is deadlocked, bail out
+                std::stringstream ss;
+                PrintDebugTextRun(ss, std::string_view(), textRun);
+                std::string_view v = ss.rdbuf()->view();
+                ImGui::DebugLog("LayMarkdownTextRuns(): bailing out because text cannot be laid in the given space for TextRun %.*s", (int)v.size(), v.data());
+                break;
+            }
 
             GlyphRun glyphRun;
             glyphRun.tr = textRun;
@@ -221,8 +244,10 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
         }
 
         // Set last GlyphRun's property, see above [1]
-        auto& lastOut = out.glyphRuns.back();
-        lastOut.tr.hasParagraphBreak = textRun.hasParagraphBreak;
+        if (!out.glyphRuns.empty()) {
+            auto& lastOut = out.glyphRuns.back();
+            lastOut.tr.hasParagraphBreak = textRun.hasParagraphBreak;
+        }
 
         if (textRun.hasParagraphBreak) {
             currPos.x = 0;
@@ -254,11 +279,12 @@ void RefreshTextBufferCachedData(TextBuffer& tb) {
 void RefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
     TextBuffer& tb = *te._tb;
 
-    if (te._cachedDataVersion == tb.cacheDataVersion) {
+    if (te._cachedDataVersion == tb.cacheDataVersion &&
+        te._cachedViewportWidth == viewportWidth) {
         return;
     }
     // There must be a bug if we somehow have a newer version in the TextEdit (downstream) than its corresponding TextBuffer (upstream)
-    assert(te._cachedDataVersion < tb.cacheDataVersion);
+    assert(te._cachedDataVersion <= tb.cacheDataVersion);
 
     auto res = LayMarkdownTextRuns({
         .styles = &gMarkdownStylesheet,
@@ -270,6 +296,7 @@ void RefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
     te._cachedGlyphRuns = std::move(res.glyphRuns);
     te._cachedContentHeight = res.boundingBox.y;
     te._cachedDataVersion = tb.cacheDataVersion;
+    te._cachedViewportWidth = viewportWidth;
 
     // TODO adjust cursor related information
 }

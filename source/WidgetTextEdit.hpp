@@ -89,6 +89,7 @@ struct TextEdit {
 
     ImGuiID _id;
     float _cachedContentHeight = 0.0f;
+    float _cachedViewportWidth = 0.0f;
     int _cachedDataVersion = 0;
 
     // Whether the cursor is on a wrapping point (end of a soft wrapped line).

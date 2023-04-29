@@ -144,25 +144,43 @@ int64_t Ionl::AdjustBufferIndex(const GapBuffer& buffer, int64_t idx, int64_t de
 }
 
 void Ionl::MoveGapToBufferIndex(Ionl::GapBuffer& buf, int64_t newIdx) {
-    int64_t oldIdx = buf.frontSize;
+    int64_t oldIdx = buf.GetGapBegin();
     if (oldIdx == newIdx) return;
 
     // NOTE: we must use memmove() because gap size may be smaller than movement distance, in which case the src region and dst region will overlap
-    auto frontEnd = buf.buffer + buf.GetFrontEnd();
-    auto backBegin = buf.buffer + buf.GetBackBegin();
     if (oldIdx < newIdx) {
-        // Moving forwards
+        // Moving towards end of buffer
 
+        //        oldIdx
+        //          |   .- newIdx
+        //          V   V
+        //     *****------*********
+        //                └──┘|
+        //                ┃   ^ gapEnd
+        //          ┌──┐🠘┛
+        //     *********------*****
+
+        // Clamp newIdx to make sure the new range still fits inside the buffer
         if (buf.bufferSize - newIdx < buf.gapSize) {
             newIdx = buf.bufferSize - buf.gapSize;
         }
         size_t size = newIdx - oldIdx;
-        memmove(frontEnd, backBegin, size);
+        memmove(buf.buffer + oldIdx, buf.buffer + buf.GetGapEnd() - size, size);
     } else /* oldIdx > newIdx */ {
-        // Moving backwards
+        // Moving towards beginning of buffer
+
+        //        newIdx
+        //          |   .- oldIdx
+        //          V   V
+        //     *********------*****
+        //          └──┘━━┓
+        //                🠛
+        //                ┌──┐
+        //     *****------*********
+        //                    ^ gapEnd
 
         size_t size = oldIdx - newIdx;
-        memmove(backBegin - size, frontEnd - size, size);
+        memmove(buf.buffer + buf.GetGapEnd() - size, buf.buffer + newIdx, size);
     }
     buf.frontSize = newIdx;
 }

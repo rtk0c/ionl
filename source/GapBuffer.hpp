@@ -81,10 +81,10 @@ int64_t AdjustBufferIndex(const GapBuffer& buffer, int64_t /*buffer index*/ idx,
 
 // Move the gap to where `newIdx` is. If achieving this is impossible (`newIdx` is too far back in the buffer as to require a smaller gap than existing)
 // we simply move the gap to the very back of the buffer.
-void MoveGapToBufferIndex(GapBuffer& buf, int64_t /*buffer index*/ newIdx);
-// Move the gap such that the post-condition `buf.GetBufferEnd() == MapLogicalIndexToBufferIndex(buf, newIdx)` is satisfied.
+void MoveGapToBufferIndex(GapBuffer& buf, int64_t newIdxBuffer);
+// Move the gap such that the post-condition `buf.GetGapEnd() == MapLogicalIndexToBufferIndex(buf, newIdx)` is satisfied.
 // In other words, `newIdx` will become the first element in the back buffer.
-void MoveGapToLogicalIndex(GapBuffer& buf, int64_t /*logical index*/ newIdx);
+void MoveGapToLogicalIndex(GapBuffer& buf, int64_t newIdxLogical);
 void WidenGap(GapBuffer& buf, size_t requestedGapSize = 0);
 void InsertAtGap(GapBuffer& buf, const ImWchar* text, size_t size);
 void InsertAtGap(GapBuffer& buf, const char* text, size_t size);

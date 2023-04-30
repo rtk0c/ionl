@@ -363,6 +363,7 @@ IMGUI_API const char*   ImParseFormatSanitizeForScanning(const char* fmt_in, cha
 IMGUI_API int           ImParseFormatPrecision(const char* format, int default_value);
 
 // Helpers: UTF-8 <> wchar conversions
+IMGUI_API int           ImTextCharToUtf8Counted(char out_buf[5], unsigned int c);                                                      // return number of UTF-8 code-points written into out_buf
 IMGUI_API const char*   ImTextCharToUtf8(char out_buf[5], unsigned int c);                                                      // return out_buf
 IMGUI_API int           ImTextStrToUtf8(char* out_buf, int out_buf_size, const ImWchar* in_text, const ImWchar* in_text_end);   // return output UTF-8 bytes count
 IMGUI_API int           ImTextCharFromUtf8(unsigned int* out_char, const char* in_text, const char* in_text_end);               // read one character. return input UTF-8 bytes count

@@ -96,6 +96,10 @@ struct TextEdit {
     bool _cursorIsAtWrapPoint = false;
 
 #if IONL_DEBUG_FEATURES
+    int _debugTargetBufferIndex = 0;
+    int _debugMoveGapDelta = 0;
+    int _debugDesiredGapSize = 64;
+    bool _debugShowGapBufferDump = false;
     bool _debugShowBoundingBoxes = false;
 #endif
 

@@ -165,7 +165,7 @@ void Ionl::MoveGapToBufferIndex(Ionl::GapBuffer& buf, int64_t newIdx) {
             newIdx = buf.bufferSize - buf.gapSize;
         }
         size_t size = newIdx - oldIdx;
-        memmove(buf.buffer + oldIdx, buf.buffer + buf.GetGapEnd() - size, size);
+        memmove(buf.buffer + oldIdx, buf.buffer + buf.GetBackBegin(), size * sizeof(ImWchar));
     } else /* oldIdx > newIdx */ {
         // Moving towards beginning of buffer
 
@@ -179,44 +179,29 @@ void Ionl::MoveGapToBufferIndex(Ionl::GapBuffer& buf, int64_t newIdx) {
         //     *****------*********
         //                    ^ gapEnd
 
+        if (newIdx < 0) {
+            newIdx = 0;
+        }
         size_t size = oldIdx - newIdx;
-        memmove(buf.buffer + buf.GetGapEnd() - size, buf.buffer + newIdx, size);
+        memmove(buf.buffer + buf.GetGapEnd() - size, buf.buffer + newIdx, size * sizeof(ImWchar));
     }
     buf.frontSize = newIdx;
 }
 
 void Ionl::MoveGapToLogicalIndex(GapBuffer& buf, int64_t newIdxLogical) {
-    // To achieve the effect of moving the gap to logical index, it turns out we just need to shift the difference
-    // between the existing gap and desired new gap location. (Moving backwards or `oldIdx > newIdx` should be trivial
-    // and is the same as MoveGapToBufferIndex(), therefore it's not illustrated here).
+    // To achieve the effect of moving the gap to logical index, it turns out we just need to count the number of elements
+    // before `newIdxLogical` currently, and then move the gap such that it sits after these many elements. Illustrated:
     //
-    //              newIdxLogical
+    //              newIdxLogical (idx=9, i.e. 9 elements before)
     //                    v
     //     *****------*********
-    //             ┏━━└──┘
-    //             ┃
-    //             🠛
-    //          ┌──┐
+    //              🠛 (somehow)
     //     *********------*****
-    //              ^      ^
-    //              |  newIdxLogical, also gap end
+    //              ^     ^
+    //              |  newIdxLogical (also idx=9, i.e. 9 elements before), also gap end
     //          gap begin
 
-    int64_t newIdx = MapLogicalIndexToBufferIndex(buf, newIdxLogical);
-    int64_t oldIdx = buf.frontSize;
-    int64_t backBegin = buf.GetBackBegin();
-    int64_t frontEnd = buf.GetFrontEnd();
-    if (oldIdx == newIdx) return;
-
-    if (oldIdx < newIdx) {
-        size_t size = newIdx - backBegin;
-        memmove(buf.buffer + frontEnd, buf.buffer + backBegin, size);
-        buf.frontSize = frontEnd + size;
-    } else /* oldIdx > newIdx */ {
-        size_t size = oldIdx - newIdx;
-        memmove(buf.buffer + backBegin - size, buf.buffer + frontEnd - size, size);
-        buf.frontSize = newIdx;
-    }
+    MoveGapToBufferIndex(buf, newIdxLogical);
 }
 
 void Ionl::WidenGap(Ionl::GapBuffer& buf, size_t requestedGapSize) {
@@ -233,9 +218,9 @@ void Ionl::WidenGap(Ionl::GapBuffer& buf, size_t requestedGapSize) {
     int64_t newBufSize = ImUpperPowerOfTwo(buf.bufferSize);
     int64_t minimumBufSize = buf.GetContentSize() + requestedGapSize;
     // TODO keep a reasonable size once we get above e.g. 8KB?
-    do {
+    while (newBufSize < minimumBufSize) {
         newBufSize *= 2;
-    } while (newBufSize < minimumBufSize);
+    }
 
     ReallocateBuffer(buf.buffer, newBufSize);
 
@@ -246,7 +231,7 @@ void Ionl::WidenGap(Ionl::GapBuffer& buf, size_t requestedGapSize) {
     memmove(
         /*New back's location*/ buf.buffer + frontSize + buf.gapSize,
         /*Old back*/ buf.buffer + frontSize + oldGapSize,
-        backSize);
+        backSize * sizeof(ImWchar));
 }
 
 void Ionl::InsertAtGap(GapBuffer& buf, const ImWchar* text, size_t size) {
@@ -256,7 +241,7 @@ void Ionl::InsertAtGap(GapBuffer& buf, const ImWchar* text, size_t size) {
     }
 
     assert(buf.gapSize > size);
-    memcpy(buf.buffer + buf.GetGapBegin(), text, size);
+    memcpy(buf.buffer + buf.GetGapBegin(), text, size * sizeof(ImWchar));
     buf.frontSize += size;
     buf.gapSize -= size;
 }
@@ -273,6 +258,76 @@ void Ionl::InsertAtGap(GapBuffer& buf, const char* text, size_t size) {
     assert(remaining == text + size);
     buf.frontSize += numCodepoint;
     buf.gapSize -= numCodepoint;
+}
+
+void Ionl::DumpGapBuffer(const Ionl::GapBuffer& buf, std::ostream& out) {
+    for (int64_t i = buf.GetFrontBegin(); i < buf.GetFrontEnd(); ++i) {
+        char utf8[5];
+        int count = ImTextCharToUtf8Counted(utf8, buf.buffer[i]);
+        out.write(utf8, count);
+    }
+    for (int64_t i = buf.GetGapBegin(); i < buf.GetGapEnd(); ++i) {
+        out.put('.');
+    }
+    for (int64_t i = buf.GetBackBegin(); i < buf.GetBackEnd(); ++i) {
+        char utf8[5];
+        int count = ImTextCharToUtf8Counted(utf8, buf.buffer[i]);
+        out.write(utf8, count);
+    }
+}
+
+void Ionl::ShowGapBuffer(const Ionl::GapBuffer& buf) {
+    // Select a monospace font
+    auto monospaceFont = ImGui::GetDefaultFont();
+    auto window = ImGui::GetCurrentWindow();
+
+    float glyphHeight = monospaceFont->FontSize;
+    float glyphWidth = monospaceFont->FindGlyph('A')->AdvanceX;
+    int glyphsPerLine = IM_FLOOR(ImGui::GetContentRegionAvail().x / glyphWidth);
+    if (glyphsPerLine < 1) {
+        // If there is no space to render anything just skip
+        return;
+    }
+    int col = 0;
+    int row = 0;
+
+    ImVec2 cursor = window->DC.CursorPos;
+    ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
+    auto drawChar = [&](ImWchar c) {
+        // Handle control chars
+        switch (c) {
+            // TODO other control chars
+            case '\n': {
+                window->DrawList->AddRectFilled(cursor, cursor + ImVec2(glyphWidth, glyphHeight), IM_COL32(112, 112, 112, 255));
+            } break;
+
+            default: {
+                // Any other char, we just let ImGui render the glyph
+                monospaceFont->RenderChar(window->DrawList, glyphHeight, cursor, textColor, c);
+            } break;
+        }
+
+        col += 1;
+        cursor.x += glyphWidth;
+        if (col >= glyphsPerLine) {
+            col = 0;
+            row += 1;
+            cursor.x = window->DC.CursorPos.x;
+            cursor.y += glyphHeight;
+        }
+    };
+
+    for (int64_t i = buf.GetFrontBegin(); i < buf.GetFrontEnd(); ++i) {
+        drawChar(buf.buffer[i]);
+    }
+    for (int64_t i = buf.GetGapBegin(); i < buf.GetGapEnd(); ++i) {
+        drawChar('.');
+    }
+    for (int64_t i = buf.GetBackBegin(); i < buf.GetBackEnd(); ++i) {
+        drawChar(buf.buffer[i]);
+    }
+
+    ImGui::Dummy(cursor - window->DC.CursorPos);
 }
 
 // clang-format off

@@ -2151,6 +2151,11 @@ static inline int ImTextCharToUtf8_inline(char* buf, int buf_size, unsigned int 
     return 0;
 }
 
+int ImTextCharToUtf8Counted(char out_buf[5], unsigned int c)
+{
+  return ImTextCharToUtf8_inline(out_buf, 5, c);
+}
+
 const char* ImTextCharToUtf8(char out_buf[5], unsigned int c)
 {
     int count = ImTextCharToUtf8_inline(out_buf, 5, c);

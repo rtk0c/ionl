@@ -6,6 +6,7 @@
 #include <fmt/ostream.h>
 #include <algorithm>
 #include <cassert>
+#include <iostream>
 #include <span>
 #include <sstream>
 #include <utility>
@@ -818,7 +819,8 @@ void Ionl::TextEdit::Show() {
         .sourceEnd = _tb->gapBuffer.PtrEnd(),
     };
 
-    ImGui::PushID(_id);
+    // TODO allow all TextEdit instances to share a single window
+    ImGui::Begin("TextEdit debug menu");
     if (ImGui::CollapsingHeader("TextEdit general debug")) {
         ImGui::Checkbox("Show bounding boxes", &_debugShowBoundingBoxes);
 
@@ -837,6 +839,65 @@ void Ionl::TextEdit::Show() {
         ImGui::Indent();
         ShowDebugGlyphRun(ctx, _cachedGlyphRuns[_cursorCurrGlyphRun]);
         ImGui::Unindent();
+        ImGui::Text("_cachedContentHeight = %f", _cachedContentHeight);
+        ImGui::Text("_cachedViewportWidth = %f", _cachedViewportWidth);
+        ImGui::Text("_cachedDataVersion = %d", _cachedDataVersion);
+
+        ImGui::InputInt("##MoveTargetIndex", &_debugTargetBufferIndex);
+        ImGui::SameLine();
+        if (ImGui::Button("Move gap to (buffer) index")) {
+            MoveGapToBufferIndex(_tb->gapBuffer, _debugTargetBufferIndex);
+        }
+
+        ImGui::InputInt("##MoveDelta", &_debugMoveGapDelta);
+        ImGui::SameLine();
+        if (ImGui::Button("Move gap by this amount")) {
+            int64_t newIdx = _tb->gapBuffer.GetGapBegin() + _debugMoveGapDelta;
+            MoveGapToBufferIndex(_tb->gapBuffer, newIdx);
+        }
+
+        ImGui::InputInt("##GapSize", &_debugDesiredGapSize);
+        ImGui::SameLine();
+        if (ImGui::Button("Widen gap")) {
+            WidenGap(_tb->gapBuffer, _debugDesiredGapSize);
+        }
+
+        ImGui::Checkbox("Show GapBuffer contents", &_debugShowGapBufferDump);
+        if (_debugShowGapBufferDump) {
+            ImGui::Begin("GapBuffer contents");
+            ShowGapBuffer(_tb->gapBuffer);
+            ImGui::End();
+        }
+
+        if (ImGui::Button("Dump GapBuffer contents to stdout")) {
+            DumpGapBuffer(_tb->gapBuffer, std::cout);
+        }
+
+        if (ImGui::Button("Refresh TextBuffer caches")) {
+            RefreshTextBufferCachedData(*_tb);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("This will increase TextBuffer::cacheDataVersion by 1, which will cause this TextEdit's cached data to be refreshed next frame.");
+            ImGui::EndTooltip();
+        }
+
+        if (ImGui::Button("Refresh TextEdit caches only")) {
+            _cachedDataVersion = 0;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("Set _cachedDataVersion to 0 to force a cache refresh next frame.");
+            ImGui::EndTooltip();
+        }
+
+        if (ImGui::Button("Refresh cursor state")) {
+            RefreshCursorState(*this);
+        }
     }
     if (ImGui::CollapsingHeader("TextEdit._tb->[TextRun]")) {
         ShowDebugTextRuns(_tb->gapBuffer.buffer, _tb->textRuns);
@@ -844,7 +905,7 @@ void Ionl::TextEdit::Show() {
     if (ImGui::CollapsingHeader("TextEdit.[GlyphRun]")) {
         ShowDebugGlyphRuns(ctx, _cachedGlyphRuns);
     }
-    ImGui::PopID();
+    ImGui::End();
 #endif
 }
 

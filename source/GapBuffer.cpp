@@ -93,8 +93,8 @@ std::string Ionl::GapBuffer::ExtractContent() const {
 }
 
 void Ionl::GapBuffer::UpdateContent(std::string_view content) {
-    auto strBegin = &*content.begin();
-    auto strEnd = &*content.end();
+    auto strBegin = content.data();
+    auto strEnd = content.data() + content.size();
     auto minBufferSize = ImTextCountCharsFromUtf8(strBegin, strEnd);
     if (bufferSize < minBufferSize) {
         bufferSize = minBufferSize;

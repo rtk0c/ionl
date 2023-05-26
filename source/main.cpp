@@ -1,4 +1,5 @@
 #include "BackingStore.hpp"
+#include "Config.hpp"
 #include "Document.hpp"
 #include "Utils.hpp"
 #include "WidgetMisc.hpp"
@@ -21,6 +22,7 @@
 
 using namespace std::literals;
 using namespace Ionl;
+namespace fs = std::filesystem;
 
 static void GlfwErrorCallback(int error, const char* description) {
     fprintf(stderr, "Glfw Error %d: %s\n", error, description);
@@ -365,6 +367,8 @@ int main() {
 }
 
 int main() {
+    LoadConfigFromFile(gConfig, fs::path("./config.toml"));
+
     if (!glfwInit()) {
         return -1;
     }
@@ -417,26 +421,21 @@ int main() {
     gMarkdownStylesheet.linePadding = 0.0f;
     gMarkdownStylesheet.paragraphPadding = 4.0f;
 
-    // TODO proper discovery code
-    constexpr float kBaseFontSize = 18.0f;
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, false, false);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Italic.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, false, true);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, true, false);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, true, true);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Regular.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, false, false);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Italic.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, false, true);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-Bold.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, true, false);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationMono-BoldItalic.ttf", kBaseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, true, true);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.regularFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, false, false);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.italicFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, false, true);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.boldFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, true, false);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.boldItalicFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, true, true);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.monospaceRegularFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, false, false);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.monospaceItalicFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, false, true);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.monospaceBoldFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, true, false);
+    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.monospaceBoldItalicFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, true, true);
 
-    auto InitHeadingFont = [&](int headingLevel, float scale) {
-        auto font = io.Fonts->AddFontFromFileTTF("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", kBaseFontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
+    for (int i = 0; i < kNumTitleLevels; ++i) {
+        int headingLevel = i + 1;
+        float scale = gConfig.headingFontScales[i];
+        auto font = io.Fonts->AddFontFromFileTTF(gConfig.headingFont.c_str(), gConfig.baseFontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
         gMarkdownStylesheet.SetHeadingFace(MarkdownFace{ .font = font }, headingLevel);
-    };
-    InitHeadingFont(1, 2.5f);
-    InitHeadingFont(2, 2.0f);
-    InitHeadingFont(3, 1.5f);
-    InitHeadingFont(4, 1.2f);
-    InitHeadingFont(5, 1.0f);
+    }
 
     AppState as;
     double lastWriteTime = 0.0;

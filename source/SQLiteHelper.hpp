@@ -1,6 +1,5 @@
 #pragma once
 
-#include <date/date.h>
 #include <sqlite3.h>
 #include <cassert>
 #include <chrono>
@@ -172,7 +171,7 @@ struct SQLiteRunningStatement {
             if (datetime) {
                 std::stringstream ss(datetime);
                 TimePoint timepoint;
-                ss >> date::parse("%F %T", timepoint);
+                ss >> std::chrono::parse("%F %T", timepoint);
                 return timepoint;
             } else {
                 return TimePoint();

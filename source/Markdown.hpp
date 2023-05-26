@@ -20,6 +20,8 @@ enum class TextStyleType {
     Title_END,
 };
 
+constexpr int kNumTitleLevels = (int)TextStyleType::Title_END - (int)TextStyleType::Title_BEGIN;
+
 // Heading level: number of #'s used in writing this heading
 // e.g. # Heading -> 1
 //      ## Heading -> 2
@@ -50,7 +52,7 @@ struct MarkdownFace {
 
 struct MarkdownStylesheet {
     MarkdownFace regularFaces[1 << 3 /*different formatting flags*/] = {};
-    MarkdownFace headingFaces[5 /*5 different levels of heading*/] = {};
+    MarkdownFace headingFaces[kNumTitleLevels] = {};
 
     float linePadding = 0.0f;
     float paragraphPadding = 0.0f;

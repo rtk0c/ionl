@@ -3,11 +3,11 @@
 	"version": "0.1.0",
 	"dependencies": [
 		"fmt",
-		"date",
 		"robin-hood-hashing",
 		"glad",
 		"glfw3",
 		"freetype",
-		"sqlite3"
+		"sqlite3",
+		"tomlplusplus"
 	]
 } 

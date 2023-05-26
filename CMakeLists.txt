@@ -10,6 +10,7 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(robin_hood CONFIG REQUIRED)
 # TODO support non-vcpkg version as well?
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
+find_package(tomlplusplus CONFIG REQUIRED)
 
 file(GLOB_RECURSE IonlApp_SRC_FILES
     source/*.h
@@ -35,6 +36,7 @@ PRIVATE
     glfw
     robin_hood::robin_hood
     unofficial::sqlite3::sqlite3
+    tomlplusplus::tomlplusplus
 )
 target_compile_definitions(IonlApp
 PRIVATE

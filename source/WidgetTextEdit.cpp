@@ -521,7 +521,7 @@ void Ionl::TextEdit::Show() {
         return;
     }
 
-    bool hovered = ImGui::ItemHoverable(bb, _id);
+    bool hovered = ImGui::ItemHoverable(bb, _id, g.LastItemData.InFlags);
     bool userClicked = hovered && io.MouseClicked[ImGuiMouseButton_Left];
 
     auto activeId = ImGui::GetActiveID();
@@ -537,18 +537,26 @@ void Ionl::TextEdit::Show() {
         ImGui::SetActiveID(_id, window);
         ImGui::SetFocusID(_id, window);
         ImGui::FocusWindow(window);
-
+    }
+    if (activeId == _id) {
         // Declare our inputs
         // NOTE: ImGui::InputTextEx() uses keys like backspace but doesn't declare
         //       A quick look into the code shows that ActiveIdUsingKeyInputMask is only used by the nav system, and that only cares about the keys right at the moment
-        ImGui::SetActiveIdUsingKey(ImGuiKey_LeftArrow);
-        ImGui::SetActiveIdUsingKey(ImGuiKey_RightArrow);
-        ImGui::SetActiveIdUsingKey(ImGuiKey_UpArrow);
-        ImGui::SetActiveIdUsingKey(ImGuiKey_DownArrow);
-        ImGui::SetActiveIdUsingKey(ImGuiKey_Escape);
-        ImGui::SetActiveIdUsingKey(ImGuiKey_NavGamepadCancel);
-        ImGui::SetActiveIdUsingKey(ImGuiKey_Home);
-        ImGui::SetActiveIdUsingKey(ImGuiKey_End);
+        if (userClicked)
+            ImGui::SetKeyOwner(ImGuiKey_MouseLeft, _id);
+        g.ActiveIdUsingNavDirMask |=
+            (1 << ImGuiDir_Left) |
+            (1 << ImGuiDir_Right) |
+            (1 << ImGuiDir_Up) |
+            (1 << ImGuiDir_Down);
+        // ImGui::SetKeyOwner(ImGuiKey_LeftArrow, _id);
+        // ImGui::SetKeyOwner(ImGuiKey_RightArrow, _id);
+        // ImGui::SetKeyOwner(ImGuiKey_UpArrow, _id);
+        // ImGui::SetKeyOwner(ImGuiKey_DownArrow, _id);
+        // ImGui::SetKeyOwner(ImGuiKey_Escape, _id);
+        // ImGui::SetKeyOwner(ImGuiKey_NavGamepadCancel, _id);
+        ImGui::SetKeyOwner(ImGuiKey_Home, _id);
+        ImGui::SetKeyOwner(ImGuiKey_End, _id);
     }
 
     int64_t bufContentSize = _tb->gapBuffer.GetContentSize();

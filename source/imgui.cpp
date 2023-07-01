@@ -1809,6 +1809,16 @@ int ImStrlenW(const ImWchar* str)
     return n;
 }
 
+int ImStrlen(const char* str)
+{
+    return (int)strlen(str);
+}
+
+int ImStrlen(const ImWchar* str)
+{
+    return ImStrlenW(str);
+}
+
 // Find end-of-line. Return pointer will point to either first \n, either str_end.
 const char* ImStreolRange(const char* str, const char* str_end)
 {
@@ -2181,6 +2191,23 @@ int ImTextStrFromUtf8(ImWchar* buf, int buf_size, const char* in_text, const cha
     return (int)(buf_out - buf);
 }
 
+int ImTextStrFromUtf8NoNullTerminate(ImWchar* buf, int buf_size, const char* in_text, const char* in_text_end, const char** in_text_remaining)
+{
+    ImWchar* buf_out = buf;
+    ImWchar* buf_end = buf + buf_size;
+    while (buf_out < buf_end && (!in_text_end || in_text < in_text_end) && *in_text)
+    {
+        unsigned int c;
+        in_text += ImTextCharFromUtf8(&c, in_text, in_text_end);
+        if (c == 0)
+            break;
+        *buf_out++ = (ImWchar)c;
+    }
+    if (in_text_remaining)
+        *in_text_remaining = in_text;
+    return (int)(buf_out - buf);
+}
+
 int ImTextCountCharsFromUtf8(const char* in_text, const char* in_text_end)
 {
     int char_count = 0;
@@ -2227,6 +2254,11 @@ static inline int ImTextCharToUtf8_inline(char* buf, int buf_size, unsigned int 
     }
     // Invalid code point, the max unicode is 0x10FFFF
     return 0;
+}
+
+int ImTextCharToUtf8Counted(char out_buf[5], unsigned int c)
+{
+  return ImTextCharToUtf8_inline(out_buf, 5, c);
 }
 
 const char* ImTextCharToUtf8(char out_buf[5], unsigned int c)
@@ -3412,18 +3444,18 @@ void ImGui::RenderTextEllipsis(ImDrawList* draw_list, const ImVec2& pos_min, con
 
         // We can now claim the space between pos_max.x and ellipsis_max.x
         const float text_avail_width = ImMax((ImMax(pos_max.x, ellipsis_max_x) - ellipsis_width) - pos_min.x, 1.0f);
-        float text_size_clipped_x = font->CalcTextSizeA(font_size, text_avail_width, 0.0f, text, text_end_full, &text_end_ellipsis).x;
+        float text_size_clipped_x = font->CalcTextSize(font_size, text_avail_width, 0.0f, text, text_end_full, &text_end_ellipsis).x;
         if (text == text_end_ellipsis && text_end_ellipsis < text_end_full)
         {
             // Always display at least 1 character if there's no room for character + ellipsis
             text_end_ellipsis = text + ImTextCountUtf8BytesFromChar(text, text_end_full);
-            text_size_clipped_x = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text, text_end_ellipsis).x;
+            text_size_clipped_x = font->CalcTextSize(font_size, FLT_MAX, 0.0f, text, text_end_ellipsis).x;
         }
         while (text_end_ellipsis > text && ImCharIsBlankA(text_end_ellipsis[-1]))
         {
             // Trim trailing space before ellipsis (FIXME: Supporting non-ascii blanks would be nice, for this we need a function to backtrack in UTF-8 text)
             text_end_ellipsis--;
-            text_size_clipped_x -= font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text_end_ellipsis, text_end_ellipsis + 1).x; // Ascii blanks are always 1 byte
+            text_size_clipped_x -= font->CalcTextSize(font_size, FLT_MAX, 0.0f, text_end_ellipsis, text_end_ellipsis + 1).x; // Ascii blanks are always 1 byte
         }
 
         // Render text, render ellipsis
@@ -5398,7 +5430,7 @@ ImVec2 ImGui::CalcTextSize(const char* text, const char* text_end, bool hide_tex
     const float font_size = g.FontSize;
     if (text == text_display_end)
         return ImVec2(0.0f, font_size);
-    ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, wrap_width, text, text_display_end, NULL);
+    ImVec2 text_size = font->CalcTextSize(font_size, FLT_MAX, wrap_width, text, text_display_end, NULL);
 
     // Round
     // FIXME: This has been here since Dec 2015 (7b0bf230) but down the line we want this out.

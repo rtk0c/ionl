@@ -34,9 +34,10 @@ Index of this file:
 #ifndef IMGUI_DISABLE
 #include "imgui_internal.h"
 #ifdef IMGUI_ENABLE_FREETYPE
-#include "misc/freetype/imgui_freetype.h"
+#include "imgui_freetype.h"
 #endif
 
+#include <type_traits>
 #include <stdio.h>      // vsnprintf, sscanf, printf
 
 // Visual Studio warnings
@@ -1572,25 +1573,26 @@ void ImDrawList::AddBezierQuadratic(const ImVec2& p1, const ImVec2& p2, const Im
     PathStroke(col, 0, thickness);
 }
 
-void ImDrawList::AddText(const ImFont* font, float font_size, const ImVec2& pos, ImU32 col, const char* text_begin, const char* text_end, float wrap_width, const ImVec4* cpu_fine_clip_rect)
+template <typename TIter>
+void ImDrawListAddText(ImDrawList* draw_list, const ImFont* font, float font_size, const ImVec2& pos, ImU32 col, TIter text_begin, TIter text_end, float wrap_width, const ImVec4* cpu_fine_clip_rect)
 {
     if ((col & IM_COL32_A_MASK) == 0)
         return;
 
     if (text_end == NULL)
-        text_end = text_begin + strlen(text_begin);
+        text_end = text_begin + ImStrlen(text_begin);
     if (text_begin == text_end)
         return;
 
     // Pull default font/size from the shared ImDrawListSharedData instance
     if (font == NULL)
-        font = _Data->Font;
+        font = draw_list->_Data->Font;
     if (font_size == 0.0f)
-        font_size = _Data->FontSize;
+        font_size = draw_list->_Data->FontSize;
 
-    IM_ASSERT(font->ContainerAtlas->TexID == _CmdHeader.TextureId);  // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
+    IM_ASSERT(font->ContainerAtlas->TexID == draw_list->_CmdHeader.TextureId);  // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
 
-    ImVec4 clip_rect = _CmdHeader.ClipRect;
+    ImVec4 clip_rect = draw_list->_CmdHeader.ClipRect;
     if (cpu_fine_clip_rect)
     {
         clip_rect.x = ImMax(clip_rect.x, cpu_fine_clip_rect->x);
@@ -1598,13 +1600,29 @@ void ImDrawList::AddText(const ImFont* font, float font_size, const ImVec2& pos,
         clip_rect.z = ImMin(clip_rect.z, cpu_fine_clip_rect->z);
         clip_rect.w = ImMin(clip_rect.w, cpu_fine_clip_rect->w);
     }
-    font->RenderText(this, font_size, pos, col, clip_rect, text_begin, text_end, wrap_width, cpu_fine_clip_rect != NULL);
+    font->RenderText(draw_list, font_size, pos, col, clip_rect, text_begin, text_end, wrap_width, cpu_fine_clip_rect != NULL);
+}
+
+void ImDrawList::AddText(const ImFont* font, float font_size, const ImVec2& pos, ImU32 col, const char* text_begin, const char* text_end, float wrap_width, const ImVec4* cpu_fine_clip_rect)
+{
+    ImDrawListAddText(this, font, font_size, pos, col, text_begin, text_end, wrap_width, cpu_fine_clip_rect);
 }
 
 void ImDrawList::AddText(const ImVec2& pos, ImU32 col, const char* text_begin, const char* text_end)
 {
     AddText(NULL, 0.0f, pos, col, text_begin, text_end);
 }
+
+void ImDrawList::AddText(const ImFont* font, float font_size, const ImVec2& pos, ImU32 col, const ImWchar* text_begin, const ImWchar* text_end, float wrap_width, const ImVec4* cpu_fine_clip_rect)
+{
+    ImDrawListAddText(this, font, font_size, pos, col, text_begin, text_end, wrap_width, cpu_fine_clip_rect);
+}
+
+void ImDrawList::AddText(const ImVec2& pos, ImU32 col, const ImWchar* text_begin, const ImWchar* text_end)
+{
+    AddText(NULL, 0.0f, pos, col, text_begin, text_end);
+}
+
 
 void ImDrawList::AddImage(ImTextureID user_texture_id, const ImVec2& p_min, const ImVec2& p_max, const ImVec2& uv_min, const ImVec2& uv_max, ImU32 col)
 {
@@ -3358,9 +3376,18 @@ const ImFontGlyph* ImFont::FindGlyphNoFallback(ImWchar c) const
 }
 
 // Wrapping skips upcoming blanks
-static inline const char* CalcWordWrapNextLineStartA(const char* text, const char* text_end)
+const char* ImGui::CalcWordWrapNextLineStart(const char* text, const char* text_end)
 {
     while (text < text_end && ImCharIsBlankA(*text))
+        text++;
+    if (*text == '\n')
+        text++;
+    return text;
+}
+
+const ImWchar* ImGui::CalcWordWrapNextLineStart(const ImWchar* text, const ImWchar* text_end)
+{
+    while (text < text_end && ImCharIsBlankW(*text))
         text++;
     if (*text == '\n')
         text++;
@@ -3370,7 +3397,8 @@ static inline const char* CalcWordWrapNextLineStartA(const char* text, const cha
 // Simple word-wrapping for English, not full-featured. Please submit failing cases!
 // This will return the next location to wrap from. If no wrapping if necessary, this will fast-forward to e.g. text_end.
 // FIXME: Much possible improvements (don't cut things like "word !", "word!!!" but cut within "word,,,,", more sensible support for punctuations, support for Unicode punctuations, etc.)
-const char* ImFont::CalcWordWrapPositionA(float scale, const char* text, const char* text_end, float wrap_width) const
+template <typename TIter, typename TEnd>
+TIter ImCalcWordWrapPosition(const ImFont* font, float scale, TIter text, TEnd text_end, float wrap_width)
 {
     // For references, possible wrap point marked with ^
     //  "aaa bbb, ccc,ddd. eee   fff. ggg!"
@@ -3388,20 +3416,32 @@ const char* ImFont::CalcWordWrapPositionA(float scale, const char* text, const c
     float blank_width = 0.0f;
     wrap_width /= scale; // We work with unscaled widths to avoid scaling every characters
 
-    const char* word_end = text;
-    const char* prev_word_end = NULL;
+    TIter word_end = text;
+    TIter prev_word_end = text_end;
     bool inside_word = true;
 
-    const char* s = text;
-    IM_ASSERT(text_end != NULL);
+    TIter s = text;
     while (s < text_end)
     {
         unsigned int c = (unsigned int)*s;
-        const char* next_s;
-        if (c < 0x80)
-            next_s = s + 1;
+        TIter next_s = text_end;
+        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(*text)>, char>)
+        {
+            if (c < 0x80)
+            {
+                next_s = s + 1;
+            }
+            else
+            {
+                next_s = s + ImTextCharFromUtf8(&c, s, text_end);
+                if (c == 0)
+                    break;
+            }
+        }
         else
-            next_s = s + ImTextCharFromUtf8(&c, s, text_end);
+        {
+            next_s = s + 1;
+        }
 
         if (c < 32)
         {
@@ -3419,7 +3459,7 @@ const char* ImFont::CalcWordWrapPositionA(float scale, const char* text, const c
             }
         }
 
-        const float char_width = ((int)c < IndexAdvanceX.Size ? IndexAdvanceX.Data[c] : FallbackAdvanceX);
+        const float char_width = ((int)c < font->IndexAdvanceX.Size ? font->IndexAdvanceX.Data[c] : font->FallbackAdvanceX);
         if (ImCharIsBlankW(c))
         {
             if (inside_word)
@@ -3454,7 +3494,10 @@ const char* ImFont::CalcWordWrapPositionA(float scale, const char* text, const c
         {
             // Words that cannot possibly fit within an entire line will be cut anywhere.
             if (word_width < wrap_width)
-                s = prev_word_end ? prev_word_end : word_end;
+            {
+                bool prev_word_end_valid = prev_word_end != text_end;
+                s = prev_word_end_valid ? prev_word_end : word_end;
+            }
             break;
         }
 
@@ -3468,28 +3511,39 @@ const char* ImFont::CalcWordWrapPositionA(float scale, const char* text, const c
     return s;
 }
 
-ImVec2 ImFont::CalcTextSizeA(float size, float max_width, float wrap_width, const char* text_begin, const char* text_end, const char** remaining) const
+const char* ImFont::CalcWordWrapPosition(float scale, const char* text, const char* text_end, float wrap_width) const
+{
+    return ImCalcWordWrapPosition(this, scale, text, text_end, wrap_width);
+}
+
+const ImWchar* ImFont::CalcWordWrapPosition(float scale, const ImWchar* text, const ImWchar* text_end, float wrap_width) const
+{
+    return ImCalcWordWrapPosition(this, scale, text, text_end, wrap_width);
+}
+
+template <bool singleLineMode = false, typename TIter>
+ImVec2 ImCalcTextSize(const ImFont* font, float size, float max_width, float wrap_width, TIter text_begin, TIter text_end, TIter* remaining)
 {
     if (!text_end)
-        text_end = text_begin + strlen(text_begin); // FIXME-OPT: Need to avoid this.
+        text_end = text_begin + ImStrlen(text_begin); // FIXME-OPT: Need to avoid this.
 
     const float line_height = size;
-    const float scale = size / FontSize;
+    const float scale = size / font->FontSize;
 
     ImVec2 text_size = ImVec2(0, 0);
     float line_width = 0.0f;
 
     const bool word_wrap_enabled = (wrap_width > 0.0f);
-    const char* word_wrap_eol = NULL;
+    TIter word_wrap_eol = NULL;
 
-    const char* s = text_begin;
+    TIter s = text_begin;
     while (s < text_end)
     {
         if (word_wrap_enabled)
         {
             // Calculate how far we can render. Requires two passes on the string data but keeps the code simple and not intrusive for what's essentially an uncommon feature.
             if (!word_wrap_eol)
-                word_wrap_eol = CalcWordWrapPositionA(scale, s, text_end, wrap_width - line_width);
+                word_wrap_eol = font->CalcWordWrapPosition(scale, s, text_end, wrap_width - line_width);
 
             if (s >= word_wrap_eol)
             {
@@ -3498,18 +3552,35 @@ ImVec2 ImFont::CalcTextSizeA(float size, float max_width, float wrap_width, cons
                 text_size.y += line_height;
                 line_width = 0.0f;
                 word_wrap_eol = NULL;
-                s = CalcWordWrapNextLineStartA(s, text_end); // Wrapping skips upcoming blanks
-                continue;
+                s = ImGui::CalcWordWrapNextLineStart(s, text_end); // Wrapping skips upcoming blanks
+                if constexpr (singleLineMode)
+                    break;
+                else
+                    continue;
             }
         }
 
         // Decode and advance source
-        const char* prev_s = s;
+        TIter prev_s = s;
         unsigned int c = (unsigned int)*s;
-        if (c < 0x80)
-            s += 1;
+        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(*text_begin)>, char>)
+        {
+            if (c < 0x80)
+            {
+                s += 1;
+            }
+            else
+            {
+                s += ImTextCharFromUtf8(&c, s, text_end);
+                if (c == 0) // Malformed UTF-8?
+                    break;
+            }
+        }
         else
-            s += ImTextCharFromUtf8(&c, s, text_end);
+        {
+            // Assume single code-unit encoding
+            s += 1;
+        }
 
         if (c < 32)
         {
@@ -3524,7 +3595,7 @@ ImVec2 ImFont::CalcTextSizeA(float size, float max_width, float wrap_width, cons
                 continue;
         }
 
-        const float char_width = ((int)c < IndexAdvanceX.Size ? IndexAdvanceX.Data[c] : FallbackAdvanceX) * scale;
+        const float char_width = ((int)c < font->IndexAdvanceX.Size ? font->IndexAdvanceX.Data[c] : font->FallbackAdvanceX) * scale;
         if (line_width + char_width >= max_width)
         {
             s = prev_s;
@@ -3546,6 +3617,26 @@ ImVec2 ImFont::CalcTextSizeA(float size, float max_width, float wrap_width, cons
     return text_size;
 }
 
+ImVec2 ImFont::CalcTextSize(float size, float max_width, float wrap_width, const char* text_begin, const char* text_end, const char** remaining) const
+{
+    return ImCalcTextSize(this, size, max_width, wrap_width, text_begin, text_end, remaining);
+}
+
+ImVec2 ImFont::CalcTextLineSize(float size, float max_width, float wrap_width, const char* text_begin, const char* text_end, const char** remaining) const
+{
+    return ImCalcTextSize<true>(this, size, max_width, wrap_width, text_begin, text_end, remaining);
+}
+
+ImVec2 ImFont::CalcTextSize(float size, float max_width, float wrap_width, const ImWchar* text_begin, const ImWchar* text_end, const ImWchar** remaining) const
+{
+    return ImCalcTextSize(this, size, max_width, wrap_width, text_begin, text_end, remaining);
+}
+
+ImVec2 ImFont::CalcTextLineSize(float size, float max_width, float wrap_width, const ImWchar* text_begin, const ImWchar* text_end, const ImWchar** remaining) const
+{
+    return ImCalcTextSize<true>(this, size, max_width, wrap_width, text_begin, text_end, remaining);
+}
+
 // Note: as with every ImDrawList drawing function, this expects that the font atlas texture is bound.
 void ImFont::RenderChar(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, ImWchar c) const
 {
@@ -3562,10 +3653,11 @@ void ImFont::RenderChar(ImDrawList* draw_list, float size, const ImVec2& pos, Im
 }
 
 // Note: as with every ImDrawList drawing function, this expects that the font atlas texture is bound.
-void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, const ImVec4& clip_rect, const char* text_begin, const char* text_end, float wrap_width, bool cpu_fine_clip) const
+template <typename TIter>
+void ImRenderText(const ImFont* font, ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, const ImVec4& clip_rect, TIter text_begin, TIter text_end, float wrap_width, bool cpu_fine_clip)
 {
     if (!text_end)
-        text_end = text_begin + strlen(text_begin); // ImGui:: functions generally already provides a valid text_end, so this is merely to handle direct calls.
+        text_end = text_begin + ImStrlen(text_begin); // ImGui:: functions generally already provides a valid text_end, so this is merely to handle direct calls.
 
     // Align to be pixel perfect
     float x = IM_FLOOR(pos.x);
@@ -3574,23 +3666,23 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
         return;
 
     const float start_x = x;
-    const float scale = size / FontSize;
-    const float line_height = FontSize * scale;
+    const float scale = size / font->FontSize;
+    const float line_height = font->FontSize * scale;
     const bool word_wrap_enabled = (wrap_width > 0.0f);
 
     // Fast-forward to first visible line
-    const char* s = text_begin;
+    TIter s = text_begin;
     if (y + line_height < clip_rect.y)
         while (y + line_height < clip_rect.y && s < text_end)
         {
-            const char* line_end = (const char*)memchr(s, '\n', text_end - s);
+            TIter line_end = (TIter)memchr(s, '\n', text_end - s);
             if (word_wrap_enabled)
             {
-                // FIXME-OPT: This is not optimal as do first do a search for \n before calling CalcWordWrapPositionA().
-                // If the specs for CalcWordWrapPositionA() were reworked to optionally return on \n we could combine both.
+                // FIXME-OPT: This is not optimal as do first do a search for \n before calling CalcWordWrapPosition().
+                // If the specs for CalcWordWrapPosition() were reworked to optionally return on \n we could combine both.
                 // However it is still better than nothing performing the fast-forward!
-                s = CalcWordWrapPositionA(scale, s, line_end ? line_end : text_end, wrap_width);
-                s = CalcWordWrapNextLineStartA(s, text_end);
+                s = font->CalcWordWrapPosition(scale, s, line_end, wrap_width);
+                s = ImGui::CalcWordWrapNextLineStart(s, text_end);
             }
             else
             {
@@ -3603,11 +3695,11 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
     // Note that very large horizontal line will still be affected by the issue (e.g. a one megabyte string buffer without a newline will likely crash atm)
     if (text_end - s > 10000 && !word_wrap_enabled)
     {
-        const char* s_end = s;
+        auto s_end = s;
         float y_end = y;
         while (y_end < clip_rect.w && s_end < text_end)
         {
-            s_end = (const char*)memchr(s_end, '\n', text_end - s_end);
+            s_end = (TIter)memchr(s_end, '\n', text_end - s_end);
             s_end = s_end ? s_end + 1 : text_end;
             y_end += line_height;
         }
@@ -3621,12 +3713,13 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
     const int idx_count_max = (int)(text_end - s) * 6;
     const int idx_expected_size = draw_list->IdxBuffer.Size + idx_count_max;
     draw_list->PrimReserve(idx_count_max, vtx_count_max);
-    ImDrawVert*  vtx_write = draw_list->_VtxWritePtr;
-    ImDrawIdx*   idx_write = draw_list->_IdxWritePtr;
-    unsigned int vtx_index = draw_list->_VtxCurrentIdx;
+
+    ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
+    ImDrawIdx* idx_write = draw_list->_IdxWritePtr;
+    unsigned int vtx_current_idx = draw_list->_VtxCurrentIdx;
 
     const ImU32 col_untinted = col | ~IM_COL32_A_MASK;
-    const char* word_wrap_eol = NULL;
+    TIter word_wrap_eol = NULL;
 
     while (s < text_end)
     {
@@ -3634,24 +3727,38 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
         {
             // Calculate how far we can render. Requires two passes on the string data but keeps the code simple and not intrusive for what's essentially an uncommon feature.
             if (!word_wrap_eol)
-                word_wrap_eol = CalcWordWrapPositionA(scale, s, text_end, wrap_width - (x - start_x));
+                word_wrap_eol = font->CalcWordWrapPosition(scale, s, text_end, wrap_width - (x - start_x));
 
             if (s >= word_wrap_eol)
             {
                 x = start_x;
                 y += line_height;
                 word_wrap_eol = NULL;
-                s = CalcWordWrapNextLineStartA(s, text_end); // Wrapping skips upcoming blanks
+                s = ImGui::CalcWordWrapNextLineStart(s, text_end); // Wrapping skips upcoming blanks
                 continue;
             }
         }
 
         // Decode and advance source
         unsigned int c = (unsigned int)*s;
-        if (c < 0x80)
-            s += 1;
+        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(*text_begin)>, char>)
+        {
+            if (c < 0x80)
+            {
+                s += 1;
+            }
+            else
+            {
+                s += ImTextCharFromUtf8(&c, s, text_end);
+                if (c == 0) // Malformed UTF-8?
+                    break;
+            }
+        }
         else
-            s += ImTextCharFromUtf8(&c, s, text_end);
+        {
+            // Assume single code-unit encoding
+            s += 1;
+        }
 
         if (c < 32)
         {
@@ -3667,7 +3774,7 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
                 continue;
         }
 
-        const ImFontGlyph* glyph = FindGlyph((ImWchar)c);
+        const ImFontGlyph* glyph = font->FindGlyph((ImWchar)c);
         if (glyph == NULL)
             continue;
 
@@ -3722,14 +3829,14 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
 
                 // We are NOT calling PrimRectUV() here because non-inlined causes too much overhead in a debug builds. Inlined here:
                 {
+                    idx_write[0] = (ImDrawIdx)(vtx_current_idx); idx_write[1] = (ImDrawIdx)(vtx_current_idx+1); idx_write[2] = (ImDrawIdx)(vtx_current_idx+2);
+                    idx_write[3] = (ImDrawIdx)(vtx_current_idx); idx_write[4] = (ImDrawIdx)(vtx_current_idx+2); idx_write[5] = (ImDrawIdx)(vtx_current_idx+3);
                     vtx_write[0].pos.x = x1; vtx_write[0].pos.y = y1; vtx_write[0].col = glyph_col; vtx_write[0].uv.x = u1; vtx_write[0].uv.y = v1;
                     vtx_write[1].pos.x = x2; vtx_write[1].pos.y = y1; vtx_write[1].col = glyph_col; vtx_write[1].uv.x = u2; vtx_write[1].uv.y = v1;
                     vtx_write[2].pos.x = x2; vtx_write[2].pos.y = y2; vtx_write[2].col = glyph_col; vtx_write[2].uv.x = u2; vtx_write[2].uv.y = v2;
                     vtx_write[3].pos.x = x1; vtx_write[3].pos.y = y2; vtx_write[3].col = glyph_col; vtx_write[3].uv.x = u1; vtx_write[3].uv.y = v2;
-                    idx_write[0] = (ImDrawIdx)(vtx_index); idx_write[1] = (ImDrawIdx)(vtx_index + 1); idx_write[2] = (ImDrawIdx)(vtx_index + 2);
-                    idx_write[3] = (ImDrawIdx)(vtx_index); idx_write[4] = (ImDrawIdx)(vtx_index + 2); idx_write[5] = (ImDrawIdx)(vtx_index + 3);
                     vtx_write += 4;
-                    vtx_index += 4;
+                    vtx_current_idx += 4;
                     idx_write += 6;
                 }
             }
@@ -3743,7 +3850,17 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
     draw_list->CmdBuffer[draw_list->CmdBuffer.Size - 1].ElemCount -= (idx_expected_size - draw_list->IdxBuffer.Size);
     draw_list->_VtxWritePtr = vtx_write;
     draw_list->_IdxWritePtr = idx_write;
-    draw_list->_VtxCurrentIdx = vtx_index;
+    draw_list->_VtxCurrentIdx = vtx_current_idx;
+}
+
+void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, const ImVec4& clip_rect, const char* text_begin, const char* text_end, float wrap_width, bool cpu_fine_clip) const
+{
+    ImRenderText(this, draw_list, size, pos, col, clip_rect, text_begin, text_end, wrap_width, cpu_fine_clip);
+}
+
+void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, const ImVec4& clip_rect, const ImWchar* text_begin, const ImWchar* text_end, float wrap_width, bool cpu_fine_clip) const
+{
+    ImRenderText(this, draw_list, size, pos, col, clip_rect, text_begin, text_end, wrap_width, cpu_fine_clip);
 }
 
 //-----------------------------------------------------------------------------

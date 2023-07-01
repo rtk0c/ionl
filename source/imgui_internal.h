@@ -364,6 +364,8 @@ IMGUI_API char*         ImStrdup(const char* str);
 IMGUI_API char*         ImStrdupcpy(char* dst, size_t* p_dst_size, const char* str);
 IMGUI_API const char*   ImStrchrRange(const char* str_begin, const char* str_end, char c);
 IMGUI_API int           ImStrlenW(const ImWchar* str);
+IMGUI_API int           ImStrlen(const char* str);
+IMGUI_API int           ImStrlen(const ImWchar* str);
 IMGUI_API const char*   ImStreolRange(const char* str, const char* str_end);                // End end-of-line
 IMGUI_API const ImWchar*ImStrbolW(const ImWchar* buf_mid_line, const ImWchar* buf_begin);   // Find beginning-of-line
 IMGUI_API const char*   ImStristr(const char* haystack, const char* haystack_end, const char* needle, const char* needle_end);
@@ -388,10 +390,12 @@ IMGUI_API const char*   ImParseFormatSanitizeForScanning(const char* fmt_in, cha
 IMGUI_API int           ImParseFormatPrecision(const char* format, int default_value);
 
 // Helpers: UTF-8 <> wchar conversions
+IMGUI_API int           ImTextCharToUtf8Counted(char out_buf[5], unsigned int c);                                                      // return number of UTF-8 code-points written into out_buf
 IMGUI_API const char*   ImTextCharToUtf8(char out_buf[5], unsigned int c);                                                      // return out_buf
 IMGUI_API int           ImTextStrToUtf8(char* out_buf, int out_buf_size, const ImWchar* in_text, const ImWchar* in_text_end);   // return output UTF-8 bytes count
 IMGUI_API int           ImTextCharFromUtf8(unsigned int* out_char, const char* in_text, const char* in_text_end);               // read one character. return input UTF-8 bytes count
 IMGUI_API int           ImTextStrFromUtf8(ImWchar* out_buf, int out_buf_size, const char* in_text, const char* in_text_end, const char** in_remaining = NULL);   // return input UTF-8 bytes count
+IMGUI_API int           ImTextStrFromUtf8NoNullTerminate(ImWchar* out_buf, int out_buf_size, const char* in_text, const char* in_text_end, const char** in_remaining = NULL);   // return input UTF-8 bytes count
 IMGUI_API int           ImTextCountCharsFromUtf8(const char* in_text, const char* in_text_end);                                 // return number of UTF-8 code-points (NOT bytes count)
 IMGUI_API int           ImTextCountUtf8BytesFromChar(const char* in_text, const char* in_text_end);                             // return number of bytes to express one char in UTF-8
 IMGUI_API int           ImTextCountUtf8BytesFromStr(const ImWchar* in_text, const ImWchar* in_text_end);                        // return number of bytes to express string in UTF-8

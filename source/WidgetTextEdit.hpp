@@ -99,8 +99,10 @@ struct TextEdit {
     int _debugTargetBufferIndex = 0;
     int _debugMoveGapDelta = 0;
     int _debugDesiredGapSize = 64;
-    bool _debugShowGapBufferDump = false;
     bool _debugShowBoundingBoxes = false;
+    bool _debugShowGapBufferDump = false;
+    bool _debugShowTextRuns = false;
+    bool _debugShowGlyphRuns = false;
 #endif
 
     TextEdit(ImGuiID id, TextBuffer& textBuffer);

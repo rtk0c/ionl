@@ -50,25 +50,22 @@ void ShowDebugTextRun(const TChar* source, const TextRun& tr) {
         tr.style.isStrikethrough ? 's' : '-',
         tr.style.isMonospace ? 'm' : '-');
 
-    auto window = ImGui::GetCurrentWindowRead();
-    auto ptTopLeft = window->DC.CursorPos;
-
-    // Use default font because that has clearly recognizable glyph boundaries, easier for debugging purposes
-    ImGui::PushFont(nullptr);
-    // HACK: support TChar being other integral types, e.g. unsigned short for UTF-8 instead of the standard wchar_t
-    if constexpr (sizeof(TChar) == sizeof(char)) {
-        ImGui::TextEx(source + tr.begin, source + tr.end);
-    } else if constexpr (sizeof(TChar) == sizeof(ImWchar)) {
-        char buf[1000];
-        ImTextStrToUtf8(buf, IM_ARRAYSIZE(buf), source + tr.begin, source + tr.end);
-        ImGui::TextUnformatted(buf);
-    } else {
-        ImGui::TextUnformatted("Unknown char type");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(show)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        // HACK: support TChar being other integral types, e.g. unsigned short for UTF-8 instead of the standard wchar_t
+        if constexpr (sizeof(TChar) == sizeof(char)) {
+            ImGui::TextEx(source + tr.begin, source + tr.end);
+        } else if constexpr (sizeof(TChar) == sizeof(ImWchar)) {
+            char buf[1000];
+            ImTextStrToUtf8(buf, IM_ARRAYSIZE(buf), source + tr.begin, source + tr.end);
+            ImGui::TextUnformatted(buf);
+        } else {
+            ImGui::TextUnformatted("Unknown char type");
+        }
+        ImGui::EndTooltip();
     }
-    ImGui::PopFont();
-
-    auto ptBottomLeft = window->DC.CursorPos;
-    ImGui::GetWindowDrawList()->AddRect(ptTopLeft, ImVec2(ptBottomLeft.x + ImGui::GetContentRegionAvail().x, ptBottomLeft.y), IM_COL32(255, 255, 0, 255));
 }
 
 template <typename TChar>
@@ -113,7 +110,7 @@ void PrintDebugTextRuns(TStream&& out, std::string_view source, std::span<const 
 }
 
 void ShowDebugGlyphRun(const DebugShowContext& ctx, const GlyphRun& glyphRun) {
-    ImGui::Text("Top left: (%f, %f)", glyphRun.pos.x, glyphRun.pos.y);
+    ImGui::Text("TL: (%f, %f)", glyphRun.pos.x, glyphRun.pos.y);
 
     ImGui::SameLine();
     ImGui::TextDisabled("(show)");
@@ -121,18 +118,13 @@ void ShowDebugGlyphRun(const DebugShowContext& ctx, const GlyphRun& glyphRun) {
         ImGui::BeginTooltip();
         ShowDebugTextRun(ctx.sourceBeg, glyphRun.tr);
         ImGui::EndTooltip();
-
-        auto& face = gMarkdownStylesheet.LookupFace(glyphRun.tr.style);
-        ImVec2 ptMin = ctx.bb.Min + glyphRun.pos;
-        ImVec2 ptMax(ptMin.x + glyphRun.horizontalAdvance, ptMin.y + face.font->FontSize);
-        ImGui::GetForegroundDrawList()->AddRect(ptMin, ptMax, IM_COL32(255, 0, 255, 255));
     }
 }
 
 void ShowDebugGlyphRuns(const DebugShowContext& ctx, std::span<const GlyphRun> glyphRuns) {
     ImGui::Text("Showing %zu GlyphRun's:", glyphRuns.size());
     for (size_t i = 0; i < glyphRuns.size(); ++i) {
-        ImGui::Text("[%zu] ", i);
+        ImGui::Text("[%zu]", i);
         ImGui::SameLine();
         ShowDebugGlyphRun(ctx, glyphRuns[i]);
     }
@@ -820,8 +812,8 @@ void Ionl::TextEdit::Show() {
     };
 
     // TODO allow all TextEdit instances to share a single window
-    ImGui::Begin("TextEdit debug menu");
-    if (ImGui::CollapsingHeader("TextEdit general debug")) {
+    ImGui::Begin("dbg: TextEdit");
+    {
         ImGui::Checkbox("Show bounding boxes", &_debugShowBoundingBoxes);
 
         ImGui::Text("_cursorIdx = %zu", _cursorIdx);
@@ -864,8 +856,22 @@ void Ionl::TextEdit::Show() {
 
         ImGui::Checkbox("Show GapBuffer contents", &_debugShowGapBufferDump);
         if (_debugShowGapBufferDump) {
-            ImGui::Begin("GapBuffer contents");
+            ImGui::Begin("dbg: TextEdit._tb->gapBuffer");
             ShowGapBuffer(_tb->gapBuffer);
+            ImGui::End();
+        }
+
+        ImGui::Checkbox("Show TextEdit._tb->[TextRun]", &_debugShowTextRuns);
+        if (_debugShowTextRuns) {
+            ImGui::Begin("dbg: TextEdit._tb->[TextRun]");
+            ShowDebugTextRuns(_tb->gapBuffer.buffer, _tb->textRuns);
+            ImGui::End();
+        }
+
+        ImGui::Checkbox("Show TextEdit.[GlyphRun]", &_debugShowGlyphRuns);
+        if (_debugShowGlyphRuns) {
+            ImGui::Begin("dbg: TextEdit.[GlyphRun]");
+            ShowDebugGlyphRuns(ctx, _cachedGlyphRuns);
             ImGui::End();
         }
 
@@ -898,12 +904,6 @@ void Ionl::TextEdit::Show() {
         if (ImGui::Button("Refresh cursor state")) {
             RefreshCursorState(*this);
         }
-    }
-    if (ImGui::CollapsingHeader("TextEdit._tb->[TextRun]")) {
-        ShowDebugTextRuns(_tb->gapBuffer.buffer, _tb->textRuns);
-    }
-    if (ImGui::CollapsingHeader("TextEdit.[GlyphRun]")) {
-        ShowDebugGlyphRuns(ctx, _cachedGlyphRuns);
     }
     ImGui::End();
 #endif

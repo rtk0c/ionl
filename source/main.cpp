@@ -4,20 +4,25 @@
 #include "Utils.hpp"
 #include "WidgetMisc.hpp"
 
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_internal.h"
 #include "imgui_stdlib.h"
 
-#include <glad/glad.h>
-#include <cassert>
-#include <cstdlib>
+// A note on OpenGL functions:
+//
+// We only use the functions present in OpenGL 1.1 in this file (like glClear and glViewport) to setup the window, thus we COULD be using system headers dragged in glfw3.h.
+// But since they are concrete function definitions, we'd still need to link to the dll of each platform -- by using find_package(OpenGL) + target_link_libraries() in CMake which is quite a bit more stuff to add to the buildsystem.
+// As such we just use imgui_impl_opengl3_loader.h instead of the system headers.
+//
+// This is _technically_ not supported per comments in imgui_impl_opengl3_loader.h, but since we're explicitly not using other loaders + vendoring imgui anyways, it's fine for our purposes.
+#include "imgui_impl_opengl3_loader.h"
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
 #include <cstring>
-#include <iostream>
 #include <string>
 
 using namespace std::literals;

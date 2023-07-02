@@ -5,7 +5,6 @@ option(Ionl_DEBUG_FEATURES "Master flag for enabling debugging features" OFF)
 
 find_package(fmt CONFIG REQUIRED)
 find_package(Freetype REQUIRED)
-find_package(glad CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(robin_hood CONFIG REQUIRED)
 # TODO support non-vcpkg version as well?
@@ -32,7 +31,6 @@ target_link_libraries(IonlApp
 PRIVATE
     fmt::fmt
     Freetype::Freetype
-    glad::glad
     glfw
     robin_hood::robin_hood
     unofficial::sqlite3::sqlite3

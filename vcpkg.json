@@ -4,7 +4,6 @@
 	"dependencies": [
 		"fmt",
 		"robin-hood-hashing",
-		"glad",
 		"glfw3",
 		"freetype",
 		"sqlite3",

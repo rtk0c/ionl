@@ -10,6 +10,7 @@
 #include <span>
 #include <sstream>
 #include <utility>
+#include <cinttypes>
 
 using namespace std::literals;
 
@@ -39,6 +40,20 @@ const char* TextStyleTypeToString(TextStyleType type) {
 }
 
 template <typename TChar>
+void ShowDebugTextRunContents(const TChar* source, const TextRun& tr) {
+    // HACK: support TChar being other integral types, e.g. unsigned short for UTF-8 instead of the standard wchar_t
+    if constexpr (sizeof(TChar) == sizeof(char)) {
+        ImGui::TextEx(source + tr.begin, source + tr.end);
+    } else if constexpr (sizeof(TChar) == sizeof(ImWchar)) {
+        char buf[1000];
+        ImTextStrToUtf8(buf, IM_ARRAYSIZE(buf), source + tr.begin, source + tr.end);
+        ImGui::TextUnformatted(buf);
+    } else {
+        ImGui::TextUnformatted("Unknown char type");
+    }
+}
+
+template <typename TChar>
 void ShowDebugTextRun(const TChar* source, const TextRun& tr) {
     ImGui::Text("Segment: [%zu,%zu); %s %c%c%c%c%c",
         tr.begin,
@@ -54,16 +69,7 @@ void ShowDebugTextRun(const TChar* source, const TextRun& tr) {
     ImGui::TextDisabled("(show)");
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
-        // HACK: support TChar being other integral types, e.g. unsigned short for UTF-8 instead of the standard wchar_t
-        if constexpr (sizeof(TChar) == sizeof(char)) {
-            ImGui::TextEx(source + tr.begin, source + tr.end);
-        } else if constexpr (sizeof(TChar) == sizeof(ImWchar)) {
-            char buf[1000];
-            ImTextStrToUtf8(buf, IM_ARRAYSIZE(buf), source + tr.begin, source + tr.end);
-            ImGui::TextUnformatted(buf);
-        } else {
-            ImGui::TextUnformatted("Unknown char type");
-        }
+        ShowDebugTextRunContents(source, tr);
         ImGui::EndTooltip();
     }
 }
@@ -116,7 +122,7 @@ void ShowDebugGlyphRun(const DebugShowContext& ctx, const GlyphRun& glyphRun) {
     ImGui::TextDisabled("(show)");
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
-        ShowDebugTextRun(ctx.sourceBeg, glyphRun.tr);
+        ShowDebugTextRunContents(ctx.sourceBeg, glyphRun.tr);
         ImGui::EndTooltip();
     }
 }
@@ -752,8 +758,8 @@ void Ionl::TextEdit::Show() {
         } else {
             ImGui::BeginTooltip();
             ImGui::Text("Error: cannot find GlyphRun corresponding to selection begin or end. This is a bug, please report to developer immediately.");
-            ImGui::Text("selection begin = %ld, queried GlyphRun index = %zu", selBegin, selBeginGrIdx);
-            ImGui::Text("selection end = %ld, queried GlyphRun index = %zu", selEnd, selEndGrIdx);
+            ImGui::Text("selection begin = %" PRId64 ", queried GlyphRun index = %zu", selBegin, selBeginGrIdx);
+            ImGui::Text("selection end = %" PRId64 ", queried GlyphRun index = %zu", selEnd, selEndGrIdx);
             ImGui::EndTooltip();
         }
     }

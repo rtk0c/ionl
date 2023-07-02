@@ -66,7 +66,7 @@ struct GapBuffer {
     int64_t GetBackEnd() const { return bufferSize; }
     int64_t GetBackSize() const { return GetBackEnd() - GetBackBegin(); }
 
-    const ImWchar& operator[](size_t i) const { return i > frontSize ? buffer[i + gapSize] : buffer[i]; }
+    const ImWchar& operator[](size_t i) const { return i > (size_t)frontSize ? buffer[i + gapSize] : buffer[i]; }
     ImWchar& operator[](size_t i) { return const_cast<ImWchar&>(const_cast<const GapBuffer&>(*this)[i]); }
 
     std::string ExtractContent() const;

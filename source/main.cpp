@@ -23,6 +23,7 @@
 #include <GLFW/glfw3.h>
 
 #include <cstring>
+#include <stdexcept>
 #include <string>
 
 using namespace std::literals;
@@ -307,9 +308,8 @@ static const std::string& ResolveContentToText(Ionl::Document& document, const I
     } else if (auto bc = std::get_if<Ionl::BulletContentMirror>(&content.v)) {
         auto& that = document.FetchBulletByPbid(bc->referee);
         return ResolveContentToText(document, that.content);
-    } else {
-        assert(false);
     }
+    throw std::runtime_error("");
 }
 
 #include "WidgetTextEdit.hpp"
@@ -408,13 +408,10 @@ int main() {
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        return -3;
-    }
-
     IMGUI_CHECKVERSION();
     auto& ctx = *ImGui::CreateContext();
     auto& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);

@@ -1,8 +1,8 @@
-#include <ionl/BackingStore.hpp>
-#include <ionl/Config.hpp>
-#include <ionl/Document.hpp>
-#include <ionl/Utils.hpp>
-#include <ionl/WidgetMisc.hpp>
+#include <ionl/backing_store.hpp>
+#include <ionl/config.hpp>
+#include <ionl/document.hpp>
+#include <ionl/utils.hpp>
+#include <ionl/widget_misc.hpp>
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_glfw.h>
@@ -312,7 +312,7 @@ static const std::string& ResolveContentToText(Ionl::Document& document, const I
     throw std::runtime_error("");
 }
 
-#include <ionl/WidgetTextEdit.hpp>
+#include <ionl/widget_text_edit.hpp>
 
 static void ShowAppViews(AppState& as) {
     for (size_t i = 0; i < as.views.size(); ++i) {

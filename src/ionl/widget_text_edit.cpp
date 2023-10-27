@@ -1,4 +1,4 @@
-#include "WidgetTextEdit.hpp"
+#include "widget_text_edit.hpp"
 
 #include <imgui/imgui_internal.h>
 

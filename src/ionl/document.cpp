@@ -1,8 +1,8 @@
-#include "Document.hpp"
+#include "document.hpp"
 
-#include <ionl/BackingStore.hpp>
-#include <ionl/Macros.hpp>
-#include <ionl/Utils.hpp>
+#include <ionl/backing_store.hpp>
+#include <ionl/macros.hpp>
+#include <ionl/utils.hpp>
 
 #include <cassert>
 #include <string_view>

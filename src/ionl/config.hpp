@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ionl/Markdown.hpp>
+#include <ionl/markdown.hpp>
 
 #include <filesystem>
 #include <string>

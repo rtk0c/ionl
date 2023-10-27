@@ -1,6 +1,6 @@
-#include "Markdown.hpp"
+#include "markdown.hpp"
 
-#include <ionl/Macros.hpp>
+#include <ionl/macros.hpp>
 
 #include <algorithm>
 #include <array>

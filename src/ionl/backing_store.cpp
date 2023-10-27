@@ -1,9 +1,9 @@
-#include "BackingStore.hpp"
+#include "backing_store.hpp"
 
-#include <ionl/Document.hpp>
-#include <ionl/Macros.hpp>
-#include <ionl/SQLiteHelper.hpp>
-#include <ionl/Utils.hpp>
+#include <ionl/document.hpp>
+#include <ionl/macros.hpp>
+#include <ionl/sqlite_helper.hpp>
+#include <ionl/utils.hpp>
 
 #include <cassert>
 #include <cstddef>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ionl/GapBuffer.hpp>
+#include <ionl/gap_buffer.hpp>
 #include <imgui/imgui.h>
 
 #include <cstdint>

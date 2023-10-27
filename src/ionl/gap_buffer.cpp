@@ -1,4 +1,4 @@
-#include "GapBuffer.hpp"
+#include "gap_buffer.hpp"
 
 #include <imgui/imgui_internal.h>
 

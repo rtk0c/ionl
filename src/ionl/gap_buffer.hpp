@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ionl/Utils.hpp>
+#include <ionl/utils.hpp>
 #include <imgui/imgui.h>
 
 #include <cstddef>

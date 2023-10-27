@@ -1,7 +1,7 @@
 *
 
-!source/
-!source/**
+!src/
+!src/**
 
 !.gitignore
 !.editorconfig

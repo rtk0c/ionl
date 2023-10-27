@@ -1,14 +1,14 @@
-#include "BackingStore.hpp"
-#include "Config.hpp"
-#include "Document.hpp"
-#include "Utils.hpp"
-#include "WidgetMisc.hpp"
+#include <ionl/BackingStore.hpp>
+#include <ionl/Config.hpp>
+#include <ionl/Document.hpp>
+#include <ionl/Utils.hpp>
+#include <ionl/WidgetMisc.hpp>
 
-#include "imgui.h"
-#include "imgui_impl_glfw.h"
-#include "imgui_impl_opengl3.h"
-#include "imgui_internal.h"
-#include "imgui_stdlib.h"
+#include <imgui/imgui.h>
+#include <imgui/imgui_impl_glfw.h>
+#include <imgui/imgui_impl_opengl3.h>
+#include <imgui/imgui_internal.h>
+#include <imgui/imgui_stdlib.h>
 
 // A note on OpenGL functions:
 //
@@ -17,7 +17,7 @@
 // As such we just use imgui_impl_opengl3_loader.h instead of the system headers.
 //
 // This is _technically_ not supported per comments in imgui_impl_opengl3_loader.h, but since we're explicitly not using other loaders + vendoring imgui anyways, it's fine for our purposes.
-#include "imgui_impl_opengl3_loader.h"
+#include <imgui/imgui_impl_opengl3_loader.h>
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -312,7 +312,7 @@ static const std::string& ResolveContentToText(Ionl::Document& document, const I
     throw std::runtime_error("");
 }
 
-#include "WidgetTextEdit.hpp"
+#include <ionl/WidgetTextEdit.hpp>
 
 static void ShowAppViews(AppState& as) {
     for (size_t i = 0; i < as.views.size(); ++i) {

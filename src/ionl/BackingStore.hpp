@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Document.hpp"
+#include <ionl/Document.hpp>
 
 #include <memory>
 #include <vector>

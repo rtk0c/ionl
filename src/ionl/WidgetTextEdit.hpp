@@ -4,9 +4,9 @@
 // - Unicode/language-aware cursor movement (TODO do we need to grab ICU for this?)
 #pragma once
 
-#include "GapBuffer.hpp"
-#include "Markdown.hpp"
-#include "imgui.h"
+#include <ionl/GapBuffer.hpp>
+#include <ionl/Markdown.hpp>
+#include <imgui/imgui.h>
 
 #include <string>
 #include <string_view>

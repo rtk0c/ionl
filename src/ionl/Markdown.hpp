@@ -1,7 +1,7 @@
 #pragma once
 
-#include "GapBuffer.hpp"
-#include "imgui.h"
+#include <ionl/GapBuffer.hpp>
+#include <imgui/imgui.h>
 
 #include <cstdint>
 #include <vector>

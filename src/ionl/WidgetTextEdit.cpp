@@ -1,6 +1,6 @@
 #include "WidgetTextEdit.hpp"
 
-#include "imgui_internal.h"
+#include <imgui/imgui_internal.h>
 
 #include <fmt/format.h>
 #include <fmt/ostream.h>

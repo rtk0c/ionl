@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Utils.hpp"
-#include "imgui.h"
+#include <ionl/Utils.hpp>
+#include <imgui/imgui.h>
 
 #include <cstddef>
 #include <cstdint>

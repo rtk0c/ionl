@@ -9,24 +9,6 @@
 
 using namespace std::literals;
 
-int Ionl::CalcHeadingLevel(TextStyleType type) {
-    auto n = (int)type;
-    return n - (int)TextStyleType::Title_BEGIN + 1;
-}
-
-Ionl::TextStyleType Ionl::MakeHeadingLevel(int level) {
-    if (level == 0) {
-        return TextStyleType::Regular;
-    } else {
-        return (TextStyleType)((int)TextStyleType::Title_BEGIN + level - 1);
-    }
-}
-
-bool Ionl::IsHeading(TextStyleType type) {
-    auto n = (int)type;
-    return n >= (int)TextStyleType::Title_BEGIN && n < (int)TextStyleType::Title_END;
-}
-
 static size_t AmalgamateVariantFlags(bool isMonospace, bool isBold, bool isItalic) {
     size_t idx = 0;
     idx |= isMonospace << 0;

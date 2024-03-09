@@ -29,18 +29,6 @@ struct GlyphRun {
     bool isSoftWrapped = false;
 };
 
-struct TextBuffer {
-    // Canonical data
-    GapBuffer gapBuffer;
-
-    // Cached data derived from canonical data
-    // Invalidation and recomputation should be done by whoever modifies `gapBuffer`.
-    std::vector<TextRun> textRuns;
-    int cacheDataVersion = 0;
-
-    TextBuffer(GapBuffer buf);
-};
-
 enum class CursorAffinity {
     Irrelevant,
     Upstream,

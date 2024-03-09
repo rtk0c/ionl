@@ -2,21 +2,19 @@
 
 #include <imgui/imgui_internal.h>
 
-#include <fmt/format.h>
-#include <fmt/ostream.h>
 #include <algorithm>
 #include <cassert>
+#include <cinttypes>
+#include <format>
 #include <iostream>
 #include <span>
 #include <sstream>
 #include <utility>
-#include <cinttypes>
 
 using namespace std::literals;
-
-namespace {
 using namespace Ionl;
 
+namespace {
 #if IONL_DEBUG_FEATURES
 struct DebugShowContext {
     ImRect bb;
@@ -92,7 +90,7 @@ void PrintDebugTextRun(TStream&& out, std::string_view source, const TextRun& tr
     } else {
         segment = source.substr(tr.begin, tr.end - tr.begin);
     }
-    fmt::print(out,
+    std::print(out,
         // {:6} - force pad to 3 characters wide for alignment in the terminal
         "[{:6},{:6}) {}{}{}{}{} \"{}\"\n",
         tr.begin,
@@ -109,7 +107,7 @@ void PrintDebugTextRun(TStream&& out, std::string_view source, const TextRun& tr
 template <typename TStream>
 void PrintDebugTextRuns(TStream&& out, std::string_view source, std::span<const TextRun> textRuns) {
     for (size_t i = 0; i < textRuns.size(); ++i) {
-        fmt::print(out, "[{}] ", i);
+        std::print(out, "[{}] ", i);
         PrintDebugTextRun(out, source, textRuns[i]);
         out << ' ';
     }
@@ -264,15 +262,6 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
     }
 
     return out;
-}
-
-void RefreshTextBufferCachedData(TextBuffer& tb) {
-    auto res = ParseMarkdownBuffer({
-        .src = &tb.gapBuffer,
-    });
-
-    tb.textRuns = std::move(res.textRuns);
-    tb.cacheDataVersion += 1;
 }
 
 void RefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
@@ -493,12 +482,6 @@ void InsertAtCursor(TextEdit& te, const ImWchar* text, size_t size) {
 }
 } // namespace
 
-Ionl::TextBuffer::TextBuffer(GapBuffer buf)
-    : gapBuffer{ std::move(buf) } //
-{
-    RefreshTextBufferCachedData(*this);
-}
-
 Ionl::TextEdit::TextEdit(ImGuiID id, TextBuffer& tb)
     : _id{ id }
     , _tb{ &tb } //
@@ -699,7 +682,7 @@ void Ionl::TextEdit::Show() {
                 io.InputQueueCharacters.resize(0);
 
                 // NOTE: this TextEdit's cache will be refreshed next frame
-                RefreshTextBufferCachedData(*_tb);
+                _tb->RefreshCaches();
                 RefreshCursorState(*this);
             }
         }
@@ -894,7 +877,7 @@ void Ionl::TextEdit::Show() {
         }
 
         if (ImGui::Button("Refresh TextBuffer caches")) {
-            RefreshTextBufferCachedData(*_tb);
+            _tb->RefreshCaches();
         }
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");

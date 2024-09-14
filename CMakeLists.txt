@@ -3,13 +3,26 @@ project(Ionl LANGUAGES CXX)
 
 option(Ionl_DEBUG_FEATURES "Master flag for enabling debugging features" OFF)
 
+
 find_package(fmt CONFIG REQUIRED)
+
+# vcpkg uses same name
 find_package(Freetype REQUIRED)
+
 find_package(glfw3 CONFIG REQUIRED)
+
 find_package(robin_hood CONFIG REQUIRED)
-# TODO support non-vcpkg version as well?
-find_package(unofficial-sqlite3 CONFIG REQUIRED)
+
+find_package(SQLite3)
+if(SQLite_FOUND)
+    set(DEP_SQLITE_LIBRARY ${SQLite3_LIBRARIES})
+else()
+    find_package(unofficial-sqlite3 CONFIG REQUIRED)
+    set(DEP_SQLITE_LIBRARY unofficial-sqlite3::sqlite3::sqlite3)
+endif()
+
 find_package(tomlplusplus CONFIG REQUIRED)
+
 
 file(GLOB_RECURSE imgui_SRC_FILES src/imgui/*.c src/imgui/*.cpp)
 add_library(imgui ${imgui_SRC_FILES})
@@ -24,11 +37,11 @@ target_link_libraries(IonlApp
 PRIVATE
     # project dependencies
     imgui
-    # vcpkg dependencies
+    # external dependencies
     fmt::fmt
     glfw
     robin_hood::robin_hood
-    unofficial::sqlite3::sqlite3
+    ${DEP_SQLITE_LIBRARY}
     tomlplusplus::tomlplusplus
 )
 target_compile_definitions(IonlApp

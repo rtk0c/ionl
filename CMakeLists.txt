@@ -14,7 +14,7 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(robin_hood CONFIG REQUIRED)
 
 find_package(SQLite3)
-if(SQLite_FOUND)
+if(SQLite3_FOUND)
     set(DEP_SQLITE_LIBRARY ${SQLite3_LIBRARIES})
 else()
     find_package(unofficial-sqlite3 CONFIG REQUIRED)

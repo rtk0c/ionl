@@ -6,7 +6,7 @@ option(Ionl_DEBUG_FEATURES "Master flag for enabling debugging features" OFF)
 
 find_package(fmt CONFIG REQUIRED)
 
-# vcpkg uses same name
+# vcpkg & CMake find module uses same package name and resulting imported target name
 find_package(Freetype REQUIRED)
 
 find_package(glfw3 CONFIG REQUIRED)
@@ -14,11 +14,9 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(robin_hood CONFIG REQUIRED)
 
 find_package(SQLite3)
-if(SQLite3_FOUND)
-    set(DEP_SQLITE_LIBRARY ${SQLite3_LIBRARIES})
-else()
+if(NOT SQLite3_FOUND)
     find_package(unofficial-sqlite3 CONFIG REQUIRED)
-    set(DEP_SQLITE_LIBRARY unofficial-sqlite3::sqlite3::sqlite3)
+    add_library(SQLite::SQLite3 ALIAS unofficial-sqlite3::sqlite3::sqlite3)
 endif()
 
 find_package(tomlplusplus CONFIG REQUIRED)
@@ -41,7 +39,7 @@ PRIVATE
     fmt::fmt
     glfw
     robin_hood::robin_hood
-    ${DEP_SQLITE_LIBRARY}
+    SQLite::SQLite3
     tomlplusplus::tomlplusplus
 )
 target_compile_definitions(IonlApp

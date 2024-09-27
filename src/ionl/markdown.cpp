@@ -1,4 +1,5 @@
 #include "markdown.hpp"
+#include "ionl/gap_buffer.hpp"
 
 #include <ionl/macros.hpp>
 
@@ -56,8 +57,8 @@ Ionl::MarkdownStylesheet Ionl::gMarkdownStylesheet{};
 //     b---- "**"
 //     ----- " finishing words"
 
-Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
-    MdParseOutput out;
+auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
+    std::vector<TextRun> result;
 
     // TODO handle cases like ***bold and italic***, the current greedy matching method parses it as **/*text**/* which breaks the control seq pairing logic
     //      note this is also broken in irccloud-format-helper, so that won't help
@@ -129,7 +130,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
             return;
         }
 
-        auto tokenBeginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
+        auto tokenBeginIdx = AdjustBufferIndex(src, reader, -kVisionSize);
         tokens.push_back(Token{
             .begin = tokenBeginIdx,
             .end = tokenBeginIdx + readerAdvance,
@@ -139,10 +140,10 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
     };
 
     std::pair<int64_t, int64_t> sourceSegments[] = {
-        { in.src->GetFrontBegin(), in.src->GetFrontSize() },
-        { in.src->GetBackBegin(), in.src->GetBackSize() },
+        { src.GetFrontBegin(), src.GetFrontSize() },
+        { src.GetBackBegin(), src.GetBackSize() },
         // The dummy segment at the very end for `reader` to advance until the very end of source buffer
-        { in.src->GetBackEnd(), kVisionSize - 1 },
+        { src.GetBackEnd(), kVisionSize - 1 },
     };
     for (auto it = std::begin(sourceSegments); it != std::end(sourceSegments); ++it) {
         const auto& sourceSegment = *it;
@@ -175,7 +176,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
                 std::shift_left(std::begin(visionBuffer), std::end(visionBuffer), 1);
                 if (!isLastSourceSegment) {
-                    visionBuffer[kVisionSize - 1] = in.src->buffer[reader];
+                    visionBuffer[kVisionSize - 1] = src.buffer[reader];
                 } else {
                     visionBuffer[kVisionSize - 1] = '\0';
                 }
@@ -188,10 +189,10 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
             // Parse heading
             if (isBeginningOfLine && visionBuffer[0] == '#') {
-                auto beginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
+                auto beginIdx = AdjustBufferIndex(src, reader, -kVisionSize);
 
                 // We need quite a lot of lookahead here, so we use GapBufferIterator instead of having a super large vision buffer to avoid having to move around lots of data in the normal code path
-                GapBuffer::const_iterator iter(*in.src, beginIdx);
+                GapBuffer::const_iterator iter(src, beginIdx);
                 int headingLevel = 1;
                 while (*iter == '#' && iter.HasNext()) {
                     headingLevel += 1;
@@ -254,7 +255,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
             // Set for next iteration
             if (visionBuffer[0] == '\n') {
-                auto beginIdx = AdjustBufferIndex(*in.src, reader, -kVisionSize);
+                auto beginIdx = AdjustBufferIndex(src, reader, -kVisionSize);
                 tokens.push_back({
                     .begin = beginIdx,
                     .end = beginIdx + 1,
@@ -318,10 +319,10 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
 
     // TODO if we inserted a ParagraphBreak at the very end, it could make TextRun generation much simpler
 
-    // Insert a single TextRun into `out.textRuns`, while handling breaking across the gap
-    auto outputTextRun = [&in, &out](TextRun run) {
-        auto gapBegin = in.src->GetGapBegin();
-        auto gapEnd = in.src->GetGapEnd();
+    // Insert a single TextRun into `result`, while handling breaking across the gap
+    auto outputTextRun = [&result, &src](TextRun run) {
+        auto gapBegin = src.GetGapBegin();
+        auto gapEnd = src.GetGapEnd();
         if (run.begin < gapBegin && run.end > gapEnd) {
             // TextRun spans over the gap, we need to split it
             TextRun& frontRun = run;
@@ -332,10 +333,10 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
             backRun.begin = gapEnd;
             /* backRun.end; */ // Remain unchanged
 
-            out.textRuns.push_back(std::move(frontRun));
-            out.textRuns.push_back(std::move(backRun));
+            result.push_back(std::move(frontRun));
+            result.push_back(std::move(backRun));
         } else {
-            out.textRuns.push_back(std::move(run));
+            result.push_back(std::move(run));
         }
     };
 
@@ -363,8 +364,8 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
             currTextRunBegin = token.end; // We don't want the \n char to be a part of the text output
             currStyle = {};
 
-            if (!out.textRuns.empty()) {
-                out.textRuns.back().hasParagraphBreak = true;
+            if (!result.empty()) {
+                result.back().hasParagraphBreak = true;
             }
 
             continue;
@@ -407,7 +408,7 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
         }
     }
     // Add the last text range if there is any left
-    if (auto lastTextEnd = in.src->GetLastTextEnd();
+    if (auto lastTextEnd = src.GetLastTextEnd();
         currTextRunBegin != lastTextEnd)
     {
         outputTextRun({
@@ -417,5 +418,5 @@ Ionl::MdParseOutput Ionl::ParseMarkdownBuffer(const Ionl::MdParseInput& in) {
         });
     }
 
-    return out;
+    return result;
 }

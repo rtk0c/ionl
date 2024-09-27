@@ -8,7 +8,7 @@
 
 namespace Ionl {
 
-enum class TextStyleType {
+enum class TextStyleType : char {
     Regular,
     Url,
     Title_BEGIN,
@@ -21,7 +21,7 @@ enum class TextStyleType {
 };
 
 constexpr int kNumTitleLevels =
-    static_cast<int>(TextStyleType::Title_END) - static_cast<int>(TextStyleType::Title_BEGIN);
+    static_cast<char>(TextStyleType::Title_END) - static_cast<char>(TextStyleType::Title_BEGIN);
 
 // Heading level: number of #'s used in writing this heading
 // e.g. # Heading -> 1
@@ -74,13 +74,6 @@ struct MarkdownStylesheet {
 // Global, shared, and default instance of Markdown styling
 extern MarkdownStylesheet gMarkdownStylesheet;
 
-struct MdParseInput {
-    // [Required] Source buffer to parse markdown from.
-    const GapBuffer* src;
-};
-struct MdParseOutput {
-    std::vector<TextRun> textRuns;
-};
-MdParseOutput ParseMarkdownBuffer(const MdParseInput& in);
+std::vector<TextRun> ParseMarkdownBuffer(const GapBuffer& src);
 
 } // namespace Ionl

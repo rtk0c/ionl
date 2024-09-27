@@ -2,12 +2,52 @@
 
 #include <imgui/imgui.h>
 #include <ionl/gap_buffer.hpp>
-#include <ionl/text_buffer.hpp>
 
 #include <cstdint>
 #include <vector>
 
 namespace Ionl {
+
+enum class TextStyleType {
+    Regular,
+    Url,
+    Title_BEGIN,
+    Title1 = Title_BEGIN,
+    Title2,
+    Title3,
+    Title4,
+    Title5,
+    Title_END,
+};
+
+constexpr int kNumTitleLevels =
+    static_cast<int>(TextStyleType::Title_END) - static_cast<int>(TextStyleType::Title_BEGIN);
+
+// Heading level: number of #'s used in writing this heading
+// e.g. # Heading -> 1
+//      ## Heading -> 2
+int CalcHeadingLevel(TextStyleType type);
+TextStyleType MakeHeadingLevel(int level);
+bool IsHeading(TextStyleType type);
+
+struct TextStyle {
+    TextStyleType type;
+
+    // Face variants
+    bool isMonospace;
+    bool isBold;
+    bool isItalic;
+    // Decorations
+    bool isUnderline;
+    bool isStrikethrough;
+};
+
+struct TextRun {
+    int64_t begin = 0; // Buffer index
+    int64_t end = 0; // Buffer index
+    TextStyle style = {};
+    bool hasParagraphBreak = false; // Whether to break paragraph at end of this TextRun
+};
 
 struct MarkdownFace {
     // [Required]

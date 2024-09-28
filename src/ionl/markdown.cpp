@@ -61,7 +61,7 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
     std::vector<TextRun> result;
 
     // TODO handle cases like ***bold and italic***, the current greedy matching method parses it as **/*text**/* which breaks the control seq pairing logic
-    //      note this is also broken in irccloud-format-helper, so that won't help
+    //      probably has to handle this by parsing *** specially, and then do some fancy pairing logic with ***/**/* tokens to break this one up
 
     // TODO break parsing state on paragraph break
     // TODO handle code blocks
@@ -78,6 +78,7 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
         CtlSeq_BEGIN,
         CtlSeqGeneric = CtlSeq_BEGIN,
         CtlSeqInlineCode,
+        CtlSeqCodeBlock,
         CtlSeqBold,
         CtlSeqItalicAsterisk,
         CtlSeqItalicUnderscore,
@@ -212,6 +213,13 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
             }
 
             if (visionBuffer[0] == '`') {
+                if (visionBuffer[1] == '`' && visionBuffer[2] == '`') {
+                    // ```code block```
+                    readerAdvance = 3;
+                    produceControlSequence(TokenType::CtlSeqCodeBlock);
+                    // TODO eat until next ``` closer
+                    continue;
+                }
                 // `inline code`
                 readerAdvance = 1;
                 produceControlSequence(TokenType::CtlSeqInlineCode);

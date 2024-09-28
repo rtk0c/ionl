@@ -26,9 +26,7 @@ Ionl::TextBuffer::TextBuffer(GapBuffer buf)
 }
 
 void Ionl::TextBuffer::RefreshCaches() {
-    auto textRuns = ParseMarkdownBuffer(gapBuffer);
-
-    textRuns = std::move(textRuns);
+    textRuns = ParseMarkdownBuffer(gapBuffer);
     cacheDataVersion += 1;
 }
 

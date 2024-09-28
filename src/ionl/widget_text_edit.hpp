@@ -82,6 +82,7 @@ struct TextEdit {
     int _cachedDataVersion = 0;
 
     // Whether the cursor is on a wrapping point (end of a soft wrapped line).
+    // TODO _cursorAffinity seems to be only not Irrelevant if it is at a wrap point, so this variable is useless?
     bool _cursorIsAtWrapPoint = false;
 
 #if IONL_DEBUG_FEATURES

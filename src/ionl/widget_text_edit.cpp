@@ -289,6 +289,7 @@ void RefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
     te._cachedViewportWidth = viewportWidth;
 
     // TODO adjust cursor related information
+    // TODO I think _cachedDataVersion is supposed to be incremented here, not sure?
 }
 
 bool IsCharAPartOfWord(ImWchar c) {

@@ -201,7 +201,9 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
             if (remaining == beg) {
                 // The inner algorithm is deadlocked, bail out
                 std::stringstream ss;
+#if IONL_DEBUG_FEATURES
                 PrintDebugTextRun(ss, std::string_view(), textRun);
+#endif
                 std::string_view v = ss.rdbuf()->view();
                 ImGui::DebugLog("LayMarkdownTextRuns(): bailing out because text cannot be laid in the given space for TextRun %.*s", (int)v.size(), v.data());
                 break;

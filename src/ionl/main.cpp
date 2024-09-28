@@ -1,3 +1,4 @@
+#include "ionl/markdown.hpp"
 #include <ionl/backing_store.hpp>
 #include <ionl/config.hpp>
 #include <ionl/document.hpp>
@@ -423,20 +424,29 @@ int main() {
     gMarkdownStylesheet.linePadding = 0.0f;
     gMarkdownStylesheet.paragraphPadding = 4.0f;
 
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.regularFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, false, false);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.italicFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, false, true);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.boldFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, true, false);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.boldItalicFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()) }, false, true, true);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.monospaceRegularFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, false, false);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.monospaceItalicFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, false, true);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.monospaceBoldFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, true, false);
-    gMarkdownStylesheet.SetRegularFace(MarkdownFace{ .font = io.Fonts->AddFontFromFileTTF(gConfig.monospaceBoldItalicFont.c_str(), gConfig.baseFontSize, nullptr, io.Fonts->GetGlyphRangesDefault()), .color = IM_COL32(176, 215, 221, 255) }, true, true, true);
+    auto setupMdFont = [&](const std::string& fontPath, ImColor fontColor, bool isMonospace, bool isBold, bool isItalic) {
+        ImFont* imFont = fontPath.empty()
+            ? io.Fonts->Fonts[0]
+            : io.Fonts->AddFontFromFileTTF(fontPath.c_str(), gConfig.baseFontSize);
+        MarkdownFace face{ imFont, fontColor };
+        gMarkdownStylesheet.SetRegularFace(face, isMonospace, isBold, isItalic);
+    };
+    setupMdFont(gConfig.regularFont, 0, false, false, false);
+    setupMdFont(gConfig.italicFont, 0, false, false, true);
+    setupMdFont(gConfig.boldFont, 0, false, true, false);
+    setupMdFont(gConfig.boldItalicFont, 0, false, true, true);
+    setupMdFont(gConfig.monospaceRegularFont, IM_COL32(176, 215, 221, 255), true, false, false);
+    setupMdFont(gConfig.monospaceItalicFont, IM_COL32(176, 215, 221, 255), true, false, true);
+    setupMdFont(gConfig.monospaceBoldFont, IM_COL32(176, 215, 221, 255), true, true, false);
+    setupMdFont(gConfig.monospaceBoldItalicFont, IM_COL32(176, 215, 221, 255), true, true, true);
 
     for (int i = 0; i < kNumTitleLevels; ++i) {
         int headingLevel = i + 1;
         float scale = gConfig.headingFontScales[i];
-        auto font = io.Fonts->AddFontFromFileTTF(gConfig.headingFont.c_str(), gConfig.baseFontSize * scale, nullptr, io.Fonts->GetGlyphRangesDefault());
-        gMarkdownStylesheet.SetHeadingFace(MarkdownFace{ .font = font }, headingLevel);
+        ImFont* font = gConfig.headingFont.empty()
+            ? io.Fonts->Fonts[0]
+            : io.Fonts->AddFontFromFileTTF(gConfig.headingFont.c_str(), gConfig.baseFontSize * scale);
+        gMarkdownStylesheet.SetHeadingFace(MarkdownFace{ font, 0 }, headingLevel);
     }
 
     AppState as;

@@ -41,6 +41,54 @@ const Ionl::MarkdownFace& Ionl::MarkdownStylesheet::LookupFace(const TextStyle& 
 
 Ionl::MarkdownStylesheet Ionl::gMarkdownStylesheet{};
 
+enum class TokenType {
+    Text,
+    ParagraphBreak,
+
+    CtlSeq_BEGIN,
+    CtlSeqGeneric = CtlSeq_BEGIN,
+    CtlSeqInlineCode,
+    CtlSeqCodeBlock,
+    CtlSeqBold,
+    CtlSeqItalicAsterisk,
+    CtlSeqItalicUnderscore,
+    CtlSeqUnderline,
+    CtlSeqStrikethrough,
+    CtlSeq_END,
+};
+
+static void ToggleStyleForControlSeq(Ionl::TextStyle& style, TokenType ctrlseq) {
+    switch (ctrlseq) {
+        using enum TokenType;
+        case CtlSeqGeneric:
+            break;
+        case CtlSeqInlineCode:
+            style.isMonospace = !style.isMonospace;
+            break;
+        case CtlSeqBold:
+            style.isBold = !style.isBold;
+            break;
+        case CtlSeqItalicAsterisk:
+        case CtlSeqItalicUnderscore:
+            style.isItalic = !style.isItalic;
+            break;
+        case CtlSeqUnderline:
+            style.isUnderline = !style.isUnderline;
+            break;
+        case CtlSeqStrikethrough:
+            style.isStrikethrough = !style.isStrikethrough;
+            break;
+
+        case Text:
+        case ParagraphBreak:
+        case CtlSeqCodeBlock:
+            // No-op
+            break;
+
+        case CtlSeq_END: UNREACHABLE;
+    }
+}
+
 // Ionl::ParseMarkdownBuffer example #1
 // Input text:
 //     Test **bold _and italic __text__ with_ strangling_underscores** **_nest_** finishing words
@@ -71,27 +119,12 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
 
     constexpr auto kInvalidTokenIdx = std::numeric_limits<size_t>::max();
     constexpr auto kMaxHeadingLevel = 5;
-    enum class TokenType {
-        Text,
-        ParagraphBreak,
-
-        CtlSeq_BEGIN,
-        CtlSeqGeneric = CtlSeq_BEGIN,
-        CtlSeqInlineCode,
-        CtlSeqCodeBlock,
-        CtlSeqBold,
-        CtlSeqItalicAsterisk,
-        CtlSeqItalicUnderscore,
-        CtlSeqUnderline,
-        CtlSeqStrikethrough,
-        CtlSeq_END,
-    };
 
     struct Token {
         int64_t begin;
         int64_t end;
         // For some reason MSVC rejects this (referring to a local variable?)
-//        size_t pairedTokenIdx = kInvalidTokenIdx;
+        //        size_t pairedTokenIdx = kInvalidTokenIdx;
         size_t pairedTokenIdx = std::numeric_limits<size_t>::max();
         int headingLevel = 0;
         TokenType type;
@@ -377,54 +410,30 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
         });
     };
 
-    for (auto it = tokens.begin(); it != tokens.end(); ++it) {
-        const auto& token = *it;
+    for (size_t idx = 0; idx < tokens.size(); ++idx) {
+        const auto& token = tokens[idx];
 
         if (token.type == TokenType::ParagraphBreak) {
             outputCurrTextRun(token.headingLevel, token.begin);
-            currTextRunBegin = token.end; // We don't want the \n char to be a part of the text output
-            currStyle = {};
-
             if (!result.empty()) {
                 result.back().hasParagraphBreak = true;
             }
+
+            currTextRunBegin = token.end; // We don't want the \n char to be a part of the text output
+            currStyle = {};
 
             continue;
         }
 
         if (token.IsControlSequence() && token.HasPairedToken()) {
-            if (token.pairedTokenIdx > std::distance(tokens.begin(), it)) {
+            int64_t boundary = token.pairedTokenIdx > idx
                 // This is an opening control sequence
-                outputCurrTextRun(token.headingLevel, token.begin);
-                currTextRunBegin = token.begin;
-            } else {
+                ? token.begin
                 // This is a closing control sequence
-                outputCurrTextRun(token.headingLevel, token.end);
-                currTextRunBegin = token.end;
-            }
-
-            switch (token.type) {
-                using enum TokenType;
-                case CtlSeqGeneric:
-                    break;
-                case CtlSeqInlineCode:
-                    currStyle.isMonospace = !currStyle.isMonospace;
-                    break;
-                case CtlSeqBold:
-                    currStyle.isBold = !currStyle.isBold;
-                    break;
-                case CtlSeqItalicAsterisk:
-                case CtlSeqItalicUnderscore:
-                    currStyle.isItalic = !currStyle.isItalic;
-                    break;
-                case CtlSeqUnderline:
-                    currStyle.isUnderline = !currStyle.isUnderline;
-                    break;
-                case CtlSeqStrikethrough:
-                    currStyle.isStrikethrough = !currStyle.isStrikethrough;
-                    break;
-                default: UNREACHABLE;
-            }
+                : token.end;
+            outputCurrTextRun(token.headingLevel, boundary);
+            currTextRunBegin = boundary;
+            ToggleStyleForControlSeq(currStyle, token.type);
             continue;
         }
     }

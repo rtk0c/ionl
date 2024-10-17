@@ -173,7 +173,6 @@ struct LayoutOutput {
     ImVec2 boundingBox;
 };
 
-// TODO might be an idea to stop showing any text if viewportWidth is smaller than a certain threshold
 LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
     LayoutOutput out;
 
@@ -294,7 +293,6 @@ void RefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
     te._cachedViewportWidth = viewportWidth;
 
     // TODO adjust cursor related information
-    // TODO I think _cachedDataVersion is supposed to be incremented here, not sure?
 }
 
 bool IsCharAPartOfWord(ImWchar c) {
@@ -525,9 +523,6 @@ void Ionl::TextEdit::Show() {
 
     if (activeId != _id && userClicked) {
         activeId = _id;
-
-        // TODO for debugging purposes, remove after mosue click set cursor pos is implemented
-        RefreshCursorState(*this);
 
         // Adapted from imgui_widget.cpp Imgui::InputTextEx()
 

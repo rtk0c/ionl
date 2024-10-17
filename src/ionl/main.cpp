@@ -418,7 +418,7 @@ int main() {
     ImGui_ImplOpenGL3_Init(glsl_version);
 
     // Enable the default font for debugging overlays
-    // TODO do we want to include this only in debug builds?
+    // Keep this always, as a backup in case the user supplied font is broken
     io.Fonts->AddFontDefault();
 
     gMarkdownStylesheet.linePadding = 0.0f;

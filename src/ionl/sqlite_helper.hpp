@@ -129,7 +129,9 @@ struct SQLiteRunningStatement {
         while (true) {
             int err = sqlite3_step(stmt);
             // SQLITE_DONE, and all others are error codes
-            // SQLITE_OK is never returned for sqlite3_step() //TODO fact check this
+            // SQLITE_OK should never be returned, as docs do not mention it at all,
+            // and a rough look at the source code yielded nothing. If this assumption is false, fix this later.
+            assert(err != SQLITE_OK); 
             if (err == SQLITE_DONE) {
                 break;
             }
@@ -147,7 +149,6 @@ struct SQLiteRunningStatement {
     using TpFromUnixTimestamp = std::pair<TimePoint, int64_t>;
     using TpFromDateTime = std::pair<TimePoint, const char*>;
 
-    // TODO replace with overloads?
     template <typename T>
     auto ResultColumn(int column) const {
         if constexpr (std::is_enum_v<T>) {

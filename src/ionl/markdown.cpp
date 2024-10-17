@@ -111,9 +111,6 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
     // TODO handle cases like ***bold and italic***, the current greedy matching method parses it as **/*text**/* which breaks the control seq pairing logic
     //      probably has to handle this by parsing *** specially, and then do some fancy pairing logic with ***/**/* tokens to break this one up
 
-    // TODO break parsing state on paragraph break
-    // TODO handle code blocks
-
     // TODO might be an idea to adopt GFM, i.e. do paragraph break only on 2 or more consecutive \n, a single \n is simply ignored for formatting
     //      but this might not be that useful since we are not performing rendering on this
 
@@ -157,7 +154,6 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
     int readerAdvance = kVisionSize;
     int readerAdvanceDone = 0; // Used inside loop, keeping track of number of advancements completed across segment changes
 
-    // TODO move all the stateful variable reads like `reader` `readerAdvance` into explicit parameters
     auto produceControlSequence = [&](TokenType tokenType) {
         if (isEscaping) {
             isEscaping = false;

@@ -200,7 +200,7 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
             // Use ImFont::CalcTextLineSize instead of ImFont::CalcTextSize to get line breaking on word boundary,
             // instead of on any arbitrary character implemented by the former.
             // TODO don't strip whitespace at end of line, we need it to be inside a GlyphRun for cursor position code to function correctly
-            auto runDim = face.font->CalcTextLineSize(face.font->FontSize, in.viewportWidth, in.viewportWidth, beg, end, &remaining);
+            auto runDim = face.font->CalcTextLineSize(face.font->FontSize, in.viewportWidth - currLineDim.x, in.viewportWidth - currLineDim.x, beg, end, &remaining);
             // `beg` acts as the `remaining` from the last iteration (and for the first iteration, if nothing is placed hence `remaining == beg`, we should bail out too)
             if (remaining == beg) {
                 // The inner algorithm is deadlocked, bail out
@@ -270,6 +270,7 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
     return out;
 }
 
+void RefreshCursorState(TextEdit& te);
 void RefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
     TextBuffer& tb = *te._tb;
 
@@ -292,7 +293,8 @@ void RefreshTextEditCachedData(TextEdit& te, float viewportWidth) {
     te._cachedDataVersion = tb.cacheDataVersion;
     te._cachedViewportWidth = viewportWidth;
 
-    // TODO adjust cursor related information
+    RefreshCursorState(te);
+    te._cursorAnimTimer = 0.0f;
 }
 
 bool IsCharAPartOfWord(ImWchar c) {
@@ -686,7 +688,6 @@ void Ionl::TextEdit::Show() {
 
                 // NOTE: this TextEdit's cache will be refreshed next frame
                 _tb->RefreshCaches();
-                RefreshCursorState(*this);
             }
         }
     }

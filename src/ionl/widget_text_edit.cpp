@@ -7,6 +7,7 @@
 #include <cinttypes>
 #include <format>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <sstream>
 #include <utility>
@@ -180,13 +181,36 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
     ImVec2 currLineDim{};
     bool isBeginningOfParagraph = true;
 
+    const auto gapBegin = in.src->GetGapBegin();
+    const auto gapEnd = in.src->GetGapEnd();
+
     for (const auto& textRun : in.textRuns) {
         auto& face = in.styles->LookupFace(textRun.style);
 
         isBeginningOfParagraph = false;
 
-        const ImWchar* beg = &in.src->buffer[textRun.begin];
-        const ImWchar* end = &in.src->buffer[textRun.end];
+        assert(textRun.begin < textRun.end);
+        // If either begin or end is on the gap boundary, move it to the other side.
+        // This way we have a contiguous segment of text again.
+        // It CANNOT be the case that both begin and end are on the gap boundary, because that is a 0-length TextRun
+        // TODO move this logic into the markdown parser, to normalize the gap end/begin there
+        assert(!(textRun.begin == gapBegin && textRun.end == gapEnd));
+        const ImWchar* beg = &in.src->buffer[textRun.begin == gapBegin ? gapEnd : textRun.begin];
+        const ImWchar* end = &in.src->buffer[textRun.end == gapEnd ? gapBegin : textRun.end];
+
+        // If the TextRun hangs across the whole gap (gather than just at one end, like above),
+        // Copy content to process it
+        std::unique_ptr<ImWchar[]> buffer;
+        if (textRun.begin < gapBegin && textRun.end > gapEnd) {
+            int64_t length =
+                MapBufferIndexToLogicalIndex(*in.src, textRun.end) -
+                MapBufferIndexToLogicalIndex(*in.src, textRun.begin);
+            buffer = std::make_unique<ImWchar[]>(length);
+            beg = buffer.get();
+            end = buffer.get() + length;
+            // TODO split GlyphRun?
+        }
+
         // Try to lay this [beg,end) on current line, and if we can't, retry with [remaining,end) until we are done with this TextRun
         int numGenerated = 0;
         while (true) {

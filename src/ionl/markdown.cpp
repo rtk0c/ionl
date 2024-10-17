@@ -173,19 +173,6 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
         });
     };
 
-    // FIXME I now have a rough idea of what's going wrong: when typing, and a formatting change is happening across the gap
-    // (for example current text leads to \n, and then other text) this newly inserted text right before the gap gets WAYYY too much length
-    // in the token; everything after the gap still gets parsed fine
-    // e.g. we have (|||| is gap)
-    /*
-    Hello **bold** test! inserted this part just now...|||||
-    ||||||\n`some example inline code` demonstrating that!\n
-    */
-    // we end up having a token for "just now...\n`some example inline code` demonstrating that!\n", followed by
-    // "`some example inline code`" and " demonstrating that!" (this part is fine)
-    // Not quite sure were this errenously large token actually stops. But in any case, the weird rendering artifact is due
-    // to this token containing a \n, so ImGui's text renderer starts doing line breaks
-
     std::pair<int64_t, int64_t> sourceSegments[] = {
         { src.GetFrontBegin(), src.GetFrontSize() },
         { src.GetBackBegin(), src.GetBackSize() },

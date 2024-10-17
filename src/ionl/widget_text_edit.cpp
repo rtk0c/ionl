@@ -189,14 +189,8 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
 
         isBeginningOfParagraph = false;
 
-        assert(textRun.begin < textRun.end);
-        // If either begin or end is on the gap boundary, move it to the other side.
-        // This way we have a contiguous segment of text again.
-        // It CANNOT be the case that both begin and end are on the gap boundary, because that is a 0-length TextRun
-        // TODO move this logic into the markdown parser, to normalize the gap end/begin there
-        assert(!(textRun.begin == gapBegin && textRun.end == gapEnd));
-        const ImWchar* beg = &in.src->buffer[textRun.begin == gapBegin ? gapEnd : textRun.begin];
-        const ImWchar* end = &in.src->buffer[textRun.end == gapEnd ? gapBegin : textRun.end];
+        const ImWchar* beg = &in.src->buffer[textRun.begin];
+        const ImWchar* end = &in.src->buffer[textRun.end];
 
         // Try to lay this [beg,end) on current line, and if we can't, retry with [remaining,end) until we are done with this TextRun
         int numGenerated = 0;

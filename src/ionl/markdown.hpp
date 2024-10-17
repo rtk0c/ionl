@@ -74,6 +74,10 @@ struct MarkdownStylesheet {
 // Global, shared, and default instance of Markdown styling
 extern MarkdownStylesheet gMarkdownStylesheet;
 
+// Each TextRun is gaurenteed to only span a contiguous segment of the buffer.
+// If logically a single text run spans across the buffer, it is broken up and then outputed.
+// Note, this also includes the two cases (1) run ends on the gap => run.end == gapBegin; (2) run begins on the gap => run.begin == gapEnd.
+// Case (1) will never have run.end == gapEnd and case (2) will never have run.begin == gapBegin, even though this is the same thing in logical index.
 std::vector<TextRun> ParseMarkdownBuffer(const GapBuffer& src);
 
 } // namespace Ionl

@@ -364,6 +364,12 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
     auto outputTextRun = [&result, &src](TextRun run) {
         auto gapBegin = src.GetGapBegin();
         auto gapEnd = src.GetGapEnd();
+
+        assert(run.begin < run.end);
+        assert(run.end - run.begin > 0);
+        // It CANNOT be the case that both begin and end are on the gap boundary, because that is a 0-length TextRun
+        assert(!(run.begin == gapBegin && run.end == gapEnd));
+
         if (run.begin < gapBegin && run.end > gapEnd) {
             // TextRun spans over the gap, we need to split it
             TextRun& frontRun = run;
@@ -377,6 +383,12 @@ auto Ionl::ParseMarkdownBuffer(const GapBuffer& src) -> std::vector<TextRun> {
             result.push_back(std::move(frontRun));
             result.push_back(std::move(backRun));
         } else {
+            // If either begin or end is on the gap boundary, move it to the other side.
+            // This way we have a contiguous segment of text again.
+            if (run.begin == gapBegin)
+                run.begin = gapEnd;
+            if (run.end == gapEnd)
+                run.end = gapBegin;
             result.push_back(std::move(run));
         }
     };

@@ -198,19 +198,6 @@ LayoutOutput LayMarkdownTextRuns(const LayoutInput& in) {
         const ImWchar* beg = &in.src->buffer[textRun.begin == gapBegin ? gapEnd : textRun.begin];
         const ImWchar* end = &in.src->buffer[textRun.end == gapEnd ? gapBegin : textRun.end];
 
-        // If the TextRun hangs across the whole gap (gather than just at one end, like above),
-        // Copy content to process it
-        std::unique_ptr<ImWchar[]> buffer;
-        if (textRun.begin < gapBegin && textRun.end > gapEnd) {
-            int64_t length =
-                MapBufferIndexToLogicalIndex(*in.src, textRun.end) -
-                MapBufferIndexToLogicalIndex(*in.src, textRun.begin);
-            buffer = std::make_unique<ImWchar[]>(length);
-            beg = buffer.get();
-            end = buffer.get() + length;
-            // TODO split GlyphRun?
-        }
-
         // Try to lay this [beg,end) on current line, and if we can't, retry with [remaining,end) until we are done with this TextRun
         int numGenerated = 0;
         while (true) {

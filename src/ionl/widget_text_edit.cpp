@@ -639,7 +639,9 @@ void Ionl::TextEdit::Show() {
         } else if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
             // TODO
         } else if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
-            // TODO
+            ImWchar c = L'\n';
+            InsertAtCursor(*this, &c, 1);
+            _tb->RefreshCaches();
         } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_X)) {
             // Cut
             // TODO

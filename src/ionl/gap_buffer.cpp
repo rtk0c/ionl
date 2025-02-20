@@ -260,6 +260,25 @@ void Ionl::InsertAtGap(GapBuffer& buf, const char* text, size_t size) {
     buf.gapSize -= numCodepoint;
 }
 
+bool Ionl::DeleteFromGap(GapBuffer& buf, int64_t offset) {
+    if (offset < 0) {
+        // Don't delete past buffer begin
+        if (-offset < buf.GetFrontSize()) {
+            buf.frontSize += offset;
+            buf.gapSize -= offset;
+            return true;
+        }
+        return false;
+    } else {
+        // Don't delete past buffer end
+        if (offset < buf.GetBackSize()) {
+            buf.gapSize += offset;
+            return true;
+        }
+        return false;
+    }
+}
+
 void Ionl::DumpGapBuffer(const Ionl::GapBuffer& buf, std::ostream& out) {
     for (int64_t i = buf.GetFrontBegin(); i < buf.GetFrontEnd(); ++i) {
         char utf8[5];

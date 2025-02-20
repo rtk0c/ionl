@@ -488,6 +488,26 @@ void InsertAtCursor(TextEdit& te, const ImWchar* text, size_t size) {
         te._anchorIdx = te._cursorIdx;
     }
 }
+
+void DeleteAtCursor(TextEdit& te, int64_t offset) {
+    if (te.HasSelection()) {
+        // TODO
+    } else {
+        MoveGapToCursor(te);
+        DeleteFromGap(te._tb->gapBuffer, offset);
+        te._cursorIdx += offset;
+        te._anchorIdx = te._cursorIdx;
+    }
+}
+
+void DeleteAtCursor(TextEdit& te, bool isMovingWord, bool backspaceOrDelete) {
+    if (isMovingWord) {
+        // TODO
+    } else {
+        DeleteAtCursor(te, backspaceOrDelete ? -1 : 1);
+        te._tb->RefreshCaches();
+    }
+}
 } // namespace
 
 Ionl::TextEdit::TextEdit(ImGuiID id, TextBuffer& tb)
@@ -635,9 +655,9 @@ void Ionl::TextEdit::Show() {
         } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
             // TODO
         } else if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
-            // TODO
+            DeleteAtCursor(*this, isMovingWord, false);
         } else if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
-            // TODO
+            DeleteAtCursor(*this, isMovingWord, true);
         } else if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
             ImWchar c = L'\n';
             InsertAtCursor(*this, &c, 1);

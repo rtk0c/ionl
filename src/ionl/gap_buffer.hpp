@@ -90,6 +90,10 @@ void WidenGap(GapBuffer& buf, size_t requestedGapSize = 0);
 void InsertAtGap(GapBuffer& buf, const ImWchar* text, size_t size);
 void InsertAtGap(GapBuffer& buf, const char* text, size_t size);
 
+/// \param offset When positive, delete forward (to the right of the caret), and vice versa.
+/// \return false if the offset goes past the buffer size.
+bool DeleteFromGap(GapBuffer& buf, int64_t offset);
+
 void DumpGapBuffer(const GapBuffer& buf, std::ostream& out);
 // Show the GapBuffer's content using ImGui
 void ShowGapBuffer(const GapBuffer& buf);

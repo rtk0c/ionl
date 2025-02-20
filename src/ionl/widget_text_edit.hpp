@@ -108,7 +108,6 @@ struct TextEdit {
 
     /* Update cursor without updating anchor */
     void SetCursor(int64_t cursor);
-    void MoveCursor(int offset);
 
     /* Update anchor without updating cursor */
     void SetAnchor(int64_t anchor);

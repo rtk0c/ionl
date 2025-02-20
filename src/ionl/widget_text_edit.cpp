@@ -599,18 +599,26 @@ void Ionl::TextEdit::Show() {
         bool keyHome = ImGui::IsKeyPressed(ImGuiKey_Home);
         bool keyEnd = ImGui::IsKeyPressed(ImGuiKey_End);
 
-        if (keyLeft || keyRight) {
+        // Line break before braces because clang-format really wants to add them when comments exists between `}` and `else if`...
+        /******** Horizontal Movement ********/
+        if (keyLeft || keyRight)
+        {
             // Arbitarily, Left Arrow takes precedence
 
+            // When moving right, always approach a soft line break from the left, so:
             auto flowAffinity = keyLeft ? CursorAffinity::Upstream : CursorAffinity::Downstream;
             auto direction = keyLeft ? -1 : 1;
 
             if (_cursorIsAtWrapPoint && _cursorAffinity == flowAffinity) {
                 _cursorAffinity = ToggleCursorAffinity(flowAffinity);
             } else {
-                MoveCursor(isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, direction) : direction);
+                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, direction) : direction;
+                _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, _tb->gapBuffer.GetContentSize());
                 if (!io.KeyShift)
                     _anchorIdx = _cursorIdx;
+
+                // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
+                _cursorAffinity = flowAffinity;
             }
 
             RefreshCursorState(*this);
@@ -629,6 +637,7 @@ void Ionl::TextEdit::Show() {
                     _anchorIdx = bufContentSize;
                 }
             } else {
+                // Move to beginning or end of line
                 size_t starting = _cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Upstream
                     ? _cursorCurrGlyphRun - 1
                     : _cursorCurrGlyphRun;
@@ -644,36 +653,55 @@ void Ionl::TextEdit::Show() {
 
             RefreshCursorState(*this);
             _cursorAnimTimer = 0.0f;
-        } else if (keyUp || keyDown) {
+        }
+        /******** Vertical Movement ********/
+        else if (keyUp || keyDown)
+        {
             // TODO
-        } else if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        }
+        /******** Delete ********/
+        else if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+        {
             DeleteAtCursor(*this, isMovingWord, false);
-        } else if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Backspace))
+        {
             DeleteAtCursor(*this, isMovingWord, true);
-        } else if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        }
+        /******** Line break ********/
+        else if (ImGui::IsKeyPressed(ImGuiKey_Enter))
+        {
             ImWchar c = L'\n';
             InsertAtCursor(*this, &c, 1);
             _tb->RefreshCaches();
-        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_X)) {
+        }
+        /******** Shortcuts ********/
+        else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_X))
+        {
             // Cut
             // TODO
-        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_C)) {
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_C))
+        {
             // Copy
             // TODO
-        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_V)) {
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_V))
+        {
             // Paste
             // TODO
-        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_Z)) {
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_Z))
+        {
             // Undo
             // TODO
-        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_Y)) {
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_Y))
+        {
             // Redo
             // TODO
-        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_A)) {
+        } else if (isShortcutKey && ImGui::IsKeyPressed(ImGuiKey_A))
+        {
             // Select all
             // TODO
         }
 
+        /******** Movement by Mouse ********/
         float mouseX = io.MousePos.x - bb.Min.x;
         float mouseY = io.MousePos.y - bb.Min.y;
 
@@ -686,8 +714,7 @@ void Ionl::TextEdit::Show() {
             _cursorAnimTimer = 0.0f;
         }
 
-        // Process character inputs
-
+        /******** Text Input ********/
         if (io.InputQueueCharacters.Size > 0) {
             // TODO imgui checks "input_requested_by_nav", is that necessary?
             bool ignoreCharInputs = (io.KeyCtrl && !io.KeyAlt) || (isOSX && io.KeySuper);
@@ -939,18 +966,6 @@ int64_t Ionl::TextEdit::GetSelectionEnd() const {
 void Ionl::TextEdit::SetCursor(int64_t cursor) {
     _cursorIdx = cursor;
     RefreshCursorState(*this);
-}
-
-void Ionl::TextEdit::MoveCursor(int offset) {
-    _cursorIdx += offset;
-    _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, _tb->gapBuffer.GetContentSize());
-
-    // - Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
-    // - When moving right, always approach a soft line break from the left, so:
-    _cursorAffinity = offset > 0 ? CursorAffinity::Upstream : CursorAffinity::Downstream;
-
-    RefreshCursorState(*this);
-    _cursorAnimTimer = 0.0f;
 }
 
 void Ionl::TextEdit::SetAnchor(int64_t anchor) {

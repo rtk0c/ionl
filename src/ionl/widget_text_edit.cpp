@@ -510,6 +510,15 @@ void DeleteAtCursor(TextEdit& te, bool isMovingWord, bool backspaceOrDelete) {
 }
 } // namespace
 
+Ionl::CursorAffinity Ionl::ToggleCursorAffinity(CursorAffinity v) {
+    switch (v) {
+        using enum CursorAffinity;
+        case Irrelevant: return Irrelevant;
+        case Upstream: return Upstream;
+        case Downstream: return Downstream;
+    }
+}
+
 Ionl::TextEdit::TextEdit(ImGuiID id, TextBuffer& tb)
     : _id{ id }
     , _tb{ &tb } //
@@ -582,39 +591,43 @@ void Ionl::TextEdit::Show() {
         bool isMovingWord = isOSX ? io.KeyAlt : io.KeyCtrl;
         bool isShortcutKey = isOSX ? (io.KeyMods == ImGuiMod_Super) : (io.KeyMods == ImGuiMod_Ctrl);
 
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
-            if (_cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Downstream) {
-                _cursorAffinity = CursorAffinity::Upstream;
-            } else {
-                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, -1) : -1;
-                _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
-                if (!io.KeyShift) _anchorIdx = _cursorIdx;
+        bool keyLeft = ImGui::IsKeyPressed(ImGuiKey_LeftArrow);
+        bool keyRight = ImGui::IsKeyPressed(ImGuiKey_RightArrow);
+        bool keyUp = ImGui::IsKeyPressed(ImGuiKey_UpArrow);
+        bool keyDown = ImGui::IsKeyPressed(ImGuiKey_DownArrow);
 
-                // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
-                _cursorAffinity = CursorAffinity::Downstream;
+        bool keyHome = ImGui::IsKeyPressed(ImGuiKey_Home);
+        bool keyEnd = ImGui::IsKeyPressed(ImGuiKey_End);
+
+        if (keyLeft || keyRight) {
+            // Arbitarily, Left Arrow takes precedence
+
+            auto flowAffinity = keyLeft ? CursorAffinity::Upstream : CursorAffinity::Downstream;
+            auto direction = keyLeft ? -1 : 1;
+
+            if (_cursorIsAtWrapPoint && _cursorAffinity == flowAffinity) {
+                _cursorAffinity = ToggleCursorAffinity(flowAffinity);
+            } else {
+                MoveCursor(isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, direction) : direction);
+                if (!io.KeyShift)
+                    _anchorIdx = _cursorIdx;
             }
 
             RefreshCursorState(*this);
             _cursorAnimTimer = 0.0f;
-        } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
-            if (_cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Upstream) {
-                _cursorAffinity = CursorAffinity::Downstream;
-            } else {
-                _cursorIdx += isMovingWord ? CalcAdjacentWordPos(_tb->gapBuffer, _cursorIdx, +1) : +1;
-                _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, bufContentSize);
-                if (!io.KeyShift) _anchorIdx = _cursorIdx;
+        } else if (keyHome || keyEnd) {
+            // Arbitarily, Home takes precedence
 
-                // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
-                _cursorAffinity = CursorAffinity::Upstream;
-            }
-
-            RefreshCursorState(*this);
-            _cursorAnimTimer = 0.0f;
-        } else if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
             if (isMovingWord) {
-                // Move to beginning of document
-                _cursorIdx = 0;
-                _anchorIdx = 0;
+                if (keyHome) {
+                    // Move to beginning of document
+                    _cursorIdx = 0;
+                    _anchorIdx = 0;
+                } else if (keyEnd) {
+                    // Move to end of document
+                    _cursorIdx = bufContentSize;
+                    _anchorIdx = bufContentSize;
+                }
             } else {
                 size_t starting = _cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Upstream
                     ? _cursorCurrGlyphRun - 1
@@ -622,37 +635,16 @@ void Ionl::TextEdit::Show() {
                 auto [prevWrapPt, idx] = FindLineWrapBeforeIndex(_cachedGlyphRuns, starting);
 
                 _cursorIdx = MapBufferIndexToLogicalIndex(_tb->gapBuffer, idx);
-                if (!io.KeyShift) _anchorIdx = _cursorIdx;
+                if (!io.KeyShift)
+                    _anchorIdx = _cursorIdx;
 
                 // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
-                _cursorAffinity = CursorAffinity::Downstream;
+                _cursorAffinity = keyHome ? CursorAffinity::Downstream : CursorAffinity::Upstream;
             }
 
             RefreshCursorState(*this);
             _cursorAnimTimer = 0.0f;
-        } else if (ImGui::IsKeyPressed(ImGuiKey_End)) {
-            if (isMovingWord) {
-                // Move to end of document
-                _cursorIdx = bufContentSize;
-                _anchorIdx = bufContentSize;
-            } else {
-                size_t starting = _cursorIsAtWrapPoint && _cursorAffinity == CursorAffinity::Upstream
-                    ? _cursorCurrGlyphRun - 1
-                    : _cursorCurrGlyphRun;
-                auto [prevWrapPt, idx] = FindLineWrapAfterIndex(_cachedGlyphRuns, starting);
-
-                _cursorIdx = MapBufferIndexToLogicalIndex(_tb->gapBuffer, idx);
-                if (!io.KeyShift) _anchorIdx = _cursorIdx;
-
-                // Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
-                _cursorAffinity = CursorAffinity::Upstream;
-            }
-
-            RefreshCursorState(*this);
-            _cursorAnimTimer = 0.0f;
-        } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-            // TODO
-        } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        } else if (keyUp || keyDown) {
             // TODO
         } else if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
             DeleteAtCursor(*this, isMovingWord, false);
@@ -944,19 +936,29 @@ int64_t Ionl::TextEdit::GetSelectionEnd() const {
     return ImMax(_cursorIdx, _anchorIdx);
 }
 
-void Ionl::TextEdit::SetSelection(int64_t begin, int64_t end, bool cursorAtBegin) {
-    if (cursorAtBegin) {
-        _cursorIdx = begin;
-        _anchorIdx = end;
-    } else {
-        _cursorIdx = end;
-        _anchorIdx = begin;
-    }
+void Ionl::TextEdit::SetCursor(int64_t cursor) {
+    _cursorIdx = cursor;
     RefreshCursorState(*this);
 }
 
-void Ionl::TextEdit::SetCursor(int64_t cursor) {
-    _cursorIdx = cursor;
-    _anchorIdx = cursor;
+void Ionl::TextEdit::MoveCursor(int offset) {
+    _cursorIdx += offset;
+    _cursorIdx = ImClamp<int64_t>(_cursorIdx, 0, _tb->gapBuffer.GetContentSize());
+
+    // - Cleaned up by RefreshCursorState() to CursorAffinity::Irrelevant when necessary
+    // - When moving right, always approach a soft line break from the left, so:
+    _cursorAffinity = offset > 0 ? CursorAffinity::Upstream : CursorAffinity::Downstream;
+
+    RefreshCursorState(*this);
+    _cursorAnimTimer = 0.0f;
+}
+
+void Ionl::TextEdit::SetAnchor(int64_t anchor) {
+    _anchorIdx = anchor;
+    RefreshCursorState(*this);
+}
+
+void Ionl::TextEdit::SetAnchorToCursor() {
+    _anchorIdx = _cursorIdx;
     RefreshCursorState(*this);
 }

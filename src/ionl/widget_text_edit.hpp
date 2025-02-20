@@ -36,6 +36,8 @@ enum class CursorAffinity {
     Downstream,
 };
 
+CursorAffinity ToggleCursorAffinity(CursorAffinity v);
+
 /// - Spans from ImGui::GetCursorPos().x, all the way to the right at max content width
 /// - Height depends on the text inside
 struct TextEdit {
@@ -99,11 +101,19 @@ struct TextEdit {
 
     void Show();
 
+    /* Helpers for working with "selection" instead of cursor and anchor */
     bool HasSelection() const;
     int64_t GetSelectionBegin() const;
     int64_t GetSelectionEnd() const;
-    void SetSelection(int64_t begin, int64_t end, bool cursorAtBegin = false);
+
+    /* Update cursor without updating anchor */
     void SetCursor(int64_t cursor);
+    void MoveCursor(int offset);
+
+    /* Update anchor without updating cursor */
+    void SetAnchor(int64_t anchor);
+    /// Equivalently, "unselect"
+    void SetAnchorToCursor();
 };
 
 } // namespace Ionl

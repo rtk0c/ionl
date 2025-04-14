@@ -264,9 +264,10 @@ Bullet SQLiteBackingStore::FetchBullet(Pbid pbid) {
         switch (contentType) {
             case BulletType::Textual:
             default: {
-                auto content = rt.ResultColumn<const char*>(/*2nd*/ 1);
+                auto cstr = rt.ResultColumn<const char*>(/*2nd*/ 1);
+                std::string_view content(cstr ? cstr : "");
                 result.content.v = BulletContentTextual{
-                    .text = content ? content : "",
+                    .text = GapBuffer(content),
                 };
             } break;
 
@@ -332,7 +333,7 @@ void SQLiteBackingStore::SetBulletContent(Pbid bullet, const BulletContent& bull
         bulletContent.v,
         [&](const BulletContentTextual& bc) {
             rt.BindArgument(2, (int)BulletType::Textual);
-            rt.BindArgument(3, bc.text);
+            rt.BindArgument(3, bc.text.ExtractContent());
         },
         [&](const BulletContentMirror& bc) {
             rt.BindArgument(2, (int)BulletType::Mirror);

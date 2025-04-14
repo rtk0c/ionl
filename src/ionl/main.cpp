@@ -4,6 +4,7 @@
 #include <ionl/document.hpp>
 #include <ionl/utils.hpp>
 #include <ionl/widget_misc.hpp>
+#include <ionl/widget_text_edit.hpp>
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_glfw.h>
@@ -67,36 +68,22 @@ struct ShowContext {
     int count = 0;
 };
 
-struct BulletContext {
-    // Filled in by creator
-    Bullet* bullet;
-
-    // Generated when calling Init()
-    BulletType bulletType;
-    ImGuiID id;
-
-    void Init() {
-        this->bulletType = bullet->content.GetType();
-        this->id = ImGui::GetCurrentWindow()->GetID(bullet->pbid);
-    }
-};
-
 enum class BulletAction {
     OpenCtxMenu,
 };
 
-static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
+static void ShowBulletCollapseFlag(ShowContext& gctx, Bullet& bullet, ImGuiID id) {
     auto window = ImGui::GetCurrentWindow();
 
     float fontSize = ImGui::GetCurrentContext()->FontSize;
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + ImVec2(fontSize * 0.8f, fontSize) };
     ImGui::ItemSize(bb);
-    if (!ImGui::ItemAdd(bb, bctx.bullet->pbid)) {
+    if (!ImGui::ItemAdd(bb, bullet.pbid)) {
         return;
     }
 
     // Bullet has no children, no need for collapse/expand button
-    if (bctx.bullet->children.empty()) {
+    if (bullet.children.empty()) {
         return;
     }
 
@@ -106,7 +93,7 @@ static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
     ImVec2 center = bb.GetCenter();
     ImVec2 a, b, c;
     float r = fontSize * 0.3f;
-    if (bctx.bullet->expanded) {
+    if (bullet.expanded) {
         // Down
         a = ImVec2(+0.000f, +0.750f) * r;
         b = ImVec2(-0.866f, -0.750f) * r;
@@ -123,24 +110,24 @@ static void ShowBulletCollapseFlag(ShowContext& gctx, BulletContext& bctx) {
 #endif
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-        bctx.bullet->expanded = !bctx.bullet->expanded;
+        bullet.expanded = !bullet.expanded;
     }
 }
 
-static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
+static void ShowBulletIcon(ShowContext& gctx, Bullet& bullet, ImGuiID id) {
     auto window = ImGui::GetCurrentWindow();
 
     float fontSize = ImGui::GetCurrentContext()->FontSize;
     ImRect bb{ window->DC.CursorPos, window->DC.CursorPos + ImVec2(fontSize * 0.8f, fontSize) };
     ImGui::ItemSize(bb);
-    if (!ImGui::ItemAdd(bb, bctx.bullet->pbid)) {
+    if (!ImGui::ItemAdd(bb, bullet.pbid)) {
         return;
     }
 
     auto center = bb.GetCenter();
 
     // TODO better colors
-    if (!bctx.bullet->expanded) {
+    if (!bullet.expanded) {
         window->DrawList->AddCircleFilled(center, fontSize * 0.35f, ImGui::GetColorU32(ImGuiCol_TabActive));
     }
     window->DrawList->AddCircleFilled(center, fontSize * 0.2f, ImGui::GetColorU32(ImGuiCol_Text));
@@ -154,10 +141,10 @@ static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
         ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
     {
-        ImGui::OpenPopup(bctx.id);
+        ImGui::OpenPopup(id);
     }
 
-    if (ImGui::BeginPopupEx(bctx.id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
+    if (ImGui::BeginPopupEx(id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
         // TODO implement key combos
         if (ImGui::MenuItem("Copy", "Ctrl+C")) {
             // TODO
@@ -192,21 +179,20 @@ static void ShowBulletIcon(ShowContext& gctx, BulletContext& bctx) {
     // TODO trigger this with left click drag
     if (ImGui::BeginDragDropSource()) {
         // Reason: intentionally using pointer as payload
-        ImGui::SetDragDropPayload("Ionl::Bullet", bctx.bullet, sizeof(bctx.bullet)); // NOLINT(bugprone-sizeof-expression)
+        ImGui::SetDragDropPayload("Ionl::Bullet", &bullet, sizeof(bullet)); // NOLINT(bugprone-sizeof-expression)
         ImGui::EndDragDropSource();
     }
 }
 
-static void ShowBulletContent(ShowContext& gctx, BulletContext& bctx) {
+static void ShowBulletContent(ShowContext& gctx, Bullet& bullet, ImGuiID id) {
     // TODO replace with TextEdit
-    auto& bullet = *bctx.bullet;
-    ImGui::PushID(bctx.id);
+    ImGui::PushID(id);
     ::VisitVariantOverloaded(
         bullet.content.v,
         [&](BulletContentTextual& bc) {
-            if (ImGui::InputText("##BulletContent", &bc.text)) {
-                bullet.document->UpdateBulletContent(bullet);
-            }
+            // if (ImGui::InputText("##BulletContent", &bc.text)) {
+            //     bullet.document->UpdateBulletContent(bullet);
+            // }
         },
         [&](BulletContentMirror& bc) {
             // TODO
@@ -214,43 +200,41 @@ static void ShowBulletContent(ShowContext& gctx, BulletContext& bctx) {
     ImGui::PopID();
 }
 
-static void ShowBullet(ShowContext& gctx, BulletContext& bctx) {
+static void ShowBullet(ShowContext& gctx, Bullet& bullet, ImGuiID id) {
     bool withinCountLimit = gctx.count < kConfMaxFetchCount;
     if (!withinCountLimit) {
         // TODO recycler view instead of just limiting the number of bullets to render
         return;
     }
 
-    if (gctx.rootBullet == bctx.bullet) {
+    if (gctx.rootBullet == &bullet) {
         // TODO show "title"
     } else {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
 
-        ShowBulletCollapseFlag(gctx, bctx);
+        ShowBulletCollapseFlag(gctx, bullet, id);
         ImGui::SameLine();
-        ShowBulletIcon(gctx, bctx);
+        ShowBulletIcon(gctx, bullet, id);
 
         ImGui::PopStyleVar();
 
         ImGui::SameLine();
-        ShowBulletContent(gctx, bctx);
+        ShowBulletContent(gctx, bullet, id);
     }
 
     gctx.count += 1;
 
-    if (!bctx.bullet->expanded) {
+    if (!bullet.expanded) {
         return;
     }
     bool withinDepthLimit = gctx.depth < kConfMaxFetchDepth;
     if (withinDepthLimit) {
         ImGui::Indent();
         gctx.depth += 1;
-        for (Pbid childPbid : bctx.bullet->children) {
-            BulletContext childBctx;
-            childBctx.bullet = &gctx.document->FetchBulletByPbid(childPbid);
-            childBctx.Init();
-
-            ShowBullet(gctx, childBctx);
+        for (Pbid childPbid : bullet.children) {
+            Bullet& bullet = gctx.document->FetchBulletByPbid(childPbid);
+            ImGuiID id = ImGui::GetCurrentWindow()->GetID(bullet.pbid);
+            ShowBullet(gctx, bullet, id);
         }
         gctx.depth -= 1;
         ImGui::Unindent();
@@ -266,11 +250,8 @@ void DocumentView::Show() {
     gctx.document = mDocument;
     gctx.rootBullet = mCurrentBullet;
 
-    BulletContext bctx;
-    bctx.bullet = mCurrentBullet;
-    bctx.Init();
-
-    ShowBullet(gctx, bctx);
+    // TODO better ID
+    ShowBullet(gctx, *mCurrentBullet, ImGui::GetID("Ionl Document"));
 
     auto dragDropPayland = ImGui::GetDragDropPayload();
     if (dragDropPayland &&
@@ -305,15 +286,13 @@ struct AppState {
 
 static const std::string& ResolveContentToText(Ionl::Document& document, const Ionl::BulletContent& content) {
     if (auto bc = std::get_if<Ionl::BulletContentTextual>(&content.v)) {
-        return bc->text;
+        // TODO
     } else if (auto bc = std::get_if<Ionl::BulletContentMirror>(&content.v)) {
         auto& that = document.FetchBulletByPbid(bc->referee);
         return ResolveContentToText(document, that.content);
     }
     throw std::runtime_error("");
 }
-
-#include <ionl/widget_text_edit.hpp>
 
 static void ShowAppViews(AppState& as) {
     for (size_t i = 0; i < as.views.size(); ++i) {

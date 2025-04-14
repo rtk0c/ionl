@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ionl/gap_buffer.hpp>
+
 #include <robin_hood.h>
 #include <chrono>
 #include <cstddef>
@@ -32,7 +34,7 @@ enum class BulletType {
 };
 
 struct BulletContentTextual {
-    std::string text;
+    GapBuffer text;
 };
 
 struct BulletContentMirror {
